@@ -124,6 +124,34 @@ describe("terragucci waves-spec", () => {
     expect(onRelease.waves[0]!.runs.map((r) => r.target)).toEqual(["envs/prod/app"]);
   });
 
+  // terragucci#1522: the pipeline has one apply job per environment, and chant's group job applies only the runs its
+  // group holds in the rendered spec. A spec with no groups left every group job applying nothing.
+  it("names each environment's job group with the runs this branch applies", async () => {
+    const roots = ["envs/dev/net", "envs/prod/net", "envs/staging/net"];
+    const dir = repo({
+      [WAVES_SPEC]: shape([roots]),
+      "terragucci.yml": [
+        "apply:",
+        "  branches:",
+        "    release: [\"envs/staging/**\", \"envs/prod/**\"]",
+        "environments:",
+        "  dev: { roots: [\"envs/dev/**\"], gate: never }",
+        "  staging: { roots: [\"envs/staging/**\"], gate: always }",
+        "  prod: { roots: [\"envs/prod/**\"], gate: always }",
+        "",
+      ].join("\n"),
+    });
+    quiet();
+    const onMain = (await wavesSpecAt(dir, { at: "HEAD", env: { GITHUB_REF_NAME: "main" } }))!;
+    expect(onMain.waves[0]!.runs.map((r) => r.target)).toEqual(["envs/dev/net"]);
+    expect(onMain.waves[0]!.jobs).toEqual([{ name: "dev", runs: ["envs/dev/net"] }]);
+    const onRelease = (await wavesSpecAt(dir, { at: "HEAD", env: { GITHUB_REF_NAME: "release" } }))!;
+    expect(onRelease.waves[0]!.jobs).toEqual([{ name: "staging", runs: ["envs/staging/net"] }, { name: "prod", runs: ["envs/prod/net"] }]);
+    // With no environments there is one apply job per wave, and no groups.
+    const plain = repo({ [WAVES_SPEC]: shape([roots]), "terragucci.yml": "gate: never\n" });
+    expect((await wavesSpecAt(plain, { at: "HEAD", env: {} }))!.waves[0]!.jobs).toBeUndefined();
+  });
+
   it("asks the decision point under apply.point, and refuses one beside another approval mode", async () => {
     const dir = repo({ [WAVES_SPEC]: shape([["a"]]), "terragucci.yml": "apply:\n  point: change-board\n" });
     quiet();
@@ -328,6 +356,31 @@ describe("terragucci run wave: a wave on chant's step", () => {
     expect(appliedRoots(work)).toEqual([["a", true]]);
     expect(report(work).waves[0]).toMatchObject({ state: "applied", approval: "not-required", set_digest: expect.stringContaining("sha256:") });
     expect(await runWave(work, line("record"), { env })).toBe(0);
+  });
+
+  // terragucci#1522: on a merge, the deciding job decides dev's root and dev's group job applies it, so terragucci/apply
+  // adds up to applied rather than "wave 1 of 1: 1 decided".
+  it("applies a root in its environment's group job, after the deciding job, and the apply status is green", async () => {
+    const roots = ["envs/dev/net", "envs/prod/net"];
+    const config = "binary: tofu\napply:\n  branches:\n    release: [\"envs/prod/**\"]\nenvironments:\n  dev: { roots: [\"envs/dev/**\"], gate: never }\n  prod: { roots: [\"envs/prod/**\"], gate: always }\n";
+    const s = setup({ [CHANT_CONFIG]: chantConfigText(roots, "tofu"), [WAVES_SPEC]: shape([roots], "never"), "terragucci.yml": config });
+    writeFileSync(s.bin, STEP_FAKE);
+    writeFileSync(join(dirname(s.log), "plans", "net.json"), JSON.stringify({ resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["create"], before: null, after: { input: "1" }, after_unknown: {} } }] }));
+    vi.stubEnv("PATH", `${dirname(s.bin)}:${process.env.PATH}`);
+    commit(s.work, { "envs/dev/net/main.tf": "# dev\n", "envs/prod/net/main.tf": "# prod\n" });
+    git(s.work, "push", "-q", "origin", "main");
+    const spec = (await wavesSpecAt(s.work, { at: "HEAD^1", env: { GITHUB_REF_NAME: "main" } }))!;
+    writeFileSync(join(s.work, WAVES_SPEC), wavesSpecText(spec));
+    process.chdir(s.work);
+    quiet();
+    const env = { ...process.env, GITHUB_REF_NAME: "main" };
+    const job = (...more: string[]) => ["--spec", WAVES_SPEC, "--wave", "1", "--base", "HEAD^1", ...more];
+    expect(await runWave(s.work, job("--decide"), { env })).toBe(0);
+    expect(existsSync(s.log) ? readFileSync(s.log, "utf-8") : "").not.toContain("applied");
+    expect(await runWave(s.work, job("--group", "dev"), { env })).toBe(0);
+    expect(readFileSync(s.log, "utf-8")).toBe("applied net\n");
+    const { opWaveApplyStatus } = await import("@intentius/chant/op/apply-status");
+    expect(opWaveApplyStatus([join(s.work, ".chant/op-waves/tf-apply/outcomes")], 1, 1, "forgejo")).toEqual({ state: "success", description: "the wave applied" });
   });
 
   it("waits at a gate that needs an approval, in the gate job, and says how to approve", async () => {

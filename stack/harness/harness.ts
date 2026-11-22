@@ -23,11 +23,15 @@ import type { GatedRequestRead } from "@intentius/chant/lifecycle/gated-request"
 import type { OpRunRecord } from "@intentius/chant/op";
 import { TOOL_VERSIONS } from "../../packages/terragucci/src/images";
 import { bareVersion, parseClaimsTable, smokeRows, smokeScenario, type ClaimRunLike } from "./rows";
+import { harnessStateDir, stackStateDir } from "./state";
 import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath } from "./scenarios";
 
 const HERE = import.meta.dirname;
 const ROOT = resolve(HERE, "..", "..");
-const STATE = process.env.TG_STATE || join(ROOT, "stack", ".state");
+/** The harness's own work (scenario bases, scratch, the claims ledger): the caller's TG_STATE. */
+const STATE = harnessStateDir(ROOT);
+/** The stack's files (forgejo.env), where stack-up wrote them whatever TG_STATE the caller set. */
+const STACK_STATE = stackStateDir(ROOT);
 const CLAIMS_JSON = join(ROOT, "stack", "evidence", "e2e-claims.json");
 
 /** The exit code when the no-real-cloud scan found a public cloud answering: nothing is recorded. */
@@ -167,7 +171,7 @@ async function lint(args: string[]): Promise<number> {
 
 /** forgejo.env as bootstrap.sh wrote it. */
 function forgejoEnv(): Record<string, string> {
-  const file = join(STATE, "forgejo.env");
+  const file = join(STACK_STATE, "forgejo.env");
   if (!existsSync(file)) throw new Error(`no ${file}; run 'just stack-up forgejo' first`);
   const env: Record<string, string> = {};
   for (const line of readFileSync(file, "utf8").split("\n")) {
@@ -267,6 +271,10 @@ async function run(args: string[]): Promise<number> {
       reset: async () => {
         for (const pull of await forge.openPulls()) await forge.closePull(pull);
         for (const b of await forge.branches()) if (b !== "main") await forge.deleteBranch(b);
+        // The arm's release tags (release/<label>) go too, so the next arm cuts the same label.
+        const remote = `${env.TERRAGUCCI_FORGEJO_URL!.replace(/^http:\/\//, `http://${env.TERRAGUCCI_FORGEJO_USER}:${env.TERRAGUCCI_FORGEJO_TOKEN}@`)}/${seed.REPO}.git`;
+        const tags = sh("git", ["ls-remote", "--tags", "--refs", remote]).stdout.split("\n").map((l) => l.split("\t")[1]).filter((r): r is string => !!r);
+        if (tags.length > 0 && sh("git", ["push", "-q", remote, "--delete", ...tags]).status !== 0) throw new Error(`the tags of ${seed.REPO} were not deleted`);
         await forge.forceMain(seed.BASE_SHA);
         const settled = sh("bash", [join(HERE, "check.sh"), "settle"], { ...process.env, ...checkEnv() });
         if (settled.status !== 0) throw new Error(`the base of ${seed.REPO} did not settle`);

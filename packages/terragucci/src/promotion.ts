@@ -16,23 +16,37 @@
  * `envs/prod/network` are both `envs-network`. A root whose path has no such
  * segment keeps its whole path as its name.
  *
- * An environment whose gate is `always` or `on-destructive` gets a gate step
- * named after it before each of its roots, which chant's release gate binds to
- * the release, the environment and the planned change set. A component gate
- * asks on every change, so `on-destructive` asks as `always` does here.
- * `never` deploys with no approval, as it applies on merge with none.
+ * An environment whose gate is `always` or `on-destructive` waits for one
+ * approval per promote. With `.chant/pipeline.ts`, which init writes beside
+ * the components from the same terragucci.yml, that approval is the stage's
+ * gate in the pipeline, and the environment's components carry no gate of
+ * their own (`componentGated`). With no pipeline of terragucci's (a repo's
+ * own `.chant/pipeline.ts`), each component gets a gate step named after the
+ * environment before its root, which chant's release gate binds to the
+ * release, the environment and the planned change set. A gate asks on every
+ * promote, so `on-destructive` asks as `always` does here. `never` deploys
+ * with no approval, as it applies on merge with none.
+ *
+ * Before a promote or rollback deploys into an environment whose components
+ * carry no gate, `releaseApproval` reads the pipeline where chant's promote
+ * reads it, the default branch's tip, and refuses unless that pipeline gates
+ * the stage. chant's rollback passes the components' gates only, so a
+ * rollback into such a stage runs as a promote of the earlier release,
+ * through the stage's gate, and pauses the stage afterwards when it sets
+ * `pause_after_rollback`.
  *
  * chant.config.ts lists the environments in `promotion`'s order
  * (./chant-config.ts), which chant's `promotionOrder` reads: `promote --to`
  * defaults `--from` to the step before and refuses a skipped one.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { devDependencies } from "../package.json";
-import { ConfigError, normalizeGate, type ProjectSettings } from "./config";
-import { environmentOf, topGate } from "./environments";
+import { ConfigError, type ProjectSettings } from "./config";
+import { environmentOf } from "./environments";
+import { pipelineGatedStages, stageGateAtBase, stageGatePolicy } from "./pipeline";
 
 /** The components file, at the repo's root beside chant.config.ts. */
 export const PROMOTION_COMPONENTS = "terragucci.component.ts";
@@ -56,6 +70,8 @@ export interface PromotionPlan {
   components: PromotionComponent[];
   /** Environments of `promotion` whose gate asks a person, in order. */
   gated: string[];
+  /** Environments of `gated` whose components carry the gate step: those `.chant/pipeline.ts` does not gate. */
+  componentGated: string[];
   /** Why the file cannot be written; empty when it can. */
   problems: string[];
   /** What a person may want to know, such as a component one environment has and the one before it lacks. */
@@ -77,6 +93,8 @@ export function promotionPlan(input: {
   settings: Pick<ProjectSettings, "environments" | "gate">;
   /** For each root, every root it must follow (Discovered.order). */
   order: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Whether `.chant/pipeline.ts` is the one these settings write, so each stage it gates takes its approval there. */
+  pipeline?: boolean;
 }): PromotionPlan {
   const { promotion, settings } = input;
   const problems: string[] = [];
@@ -106,20 +124,28 @@ export function promotionPlan(input: {
       if (c.byEnv[env] && !c.byEnv[promotion[i - 1]!]) notes.push(`${c.byEnv[env]!.root} is the component ${c.name} in ${env}, and ${promotion[i - 1]} has no root of that name, so a promote to ${env} has no release of it to bring`);
     }
   }
-  const gated = promotion.filter((env) => (normalizeGate(settings.environments?.[env]?.gate) ?? topGate(settings)) !== "never");
-  return { components, gated, problems, notes };
+  const gated = promotion.filter((env) => stageGatePolicy(settings, env) !== "never");
+  // The decision is the pipeline's own: the stages pipelineGatedStages reads from the same settings the pipeline is written from.
+  const byPipeline = input.pipeline ? pipelineGatedStages({ ...settings, promotion: [...promotion] }) : [];
+  const componentGated = gated.filter((env) => !byPipeline.includes(env));
+  return { components, gated, componentGated, problems, notes };
 }
 
 /** A component's export name: its name with `-` as `_`, after `root_`, so no name is a keyword and no two collide. */
 const exportName = (name: string): string => `root_${name.replace(/-/g, "_")}`;
 
+/** The comment line naming the environments whose one approval is their stage gate in `.chant/pipeline.ts`. */
+const STAGE_GATED_LINE = "// Approved once, at the stage's gate in .chant/pipeline.ts: ";
+
 /** The text of terragucci.component.ts: one export per component, each step carrying its root and gate per environment as `environments`. */
-export function promotionComponentsText(plan: Pick<PromotionPlan, "components" | "gated">, promotion: readonly string[]): string {
+export function promotionComponentsText(plan: Pick<PromotionPlan, "components" | "gated" | "componentGated">, promotion: readonly string[]): string {
+  const byStage = plan.gated.filter((env) => !plan.componentGated.includes(env));
   const lines: string[] = [
     PROMOTION_MARKER,
     "// Each step names its root, and its gate, in the environments it applies in; chant picks the entry of the environment it compiles or deploys.",
     "// Run terragucci init again after adding or moving a root, or changing promotion or an environment's gate.",
-    ...(plan.gated.length > 0 ? [`// chant-disable COMP004 -- each gate waits for a person: ${releaseApproveLine("<env>")}`] : []),
+    ...(byStage.length > 0 ? [`${STAGE_GATED_LINE}${byStage.join(", ")}; ${releaseApproveLine("<env>")}`] : []),
+    ...(plan.componentGated.length > 0 ? [`// chant-disable COMP004 -- each gate waits for a person: ${releaseApproveLine("<env>")}`] : []),
     'import type { Component } from "@intentius/chant/components";',
     "",
     `const NO_ROLLBACK = ${JSON.stringify(PROMOTION_NO_ROLLBACK)};`,
@@ -127,7 +153,7 @@ export function promotionComponentsText(plan: Pick<PromotionPlan, "components" |
   for (const c of plan.components) {
     const envs = promotion.filter((env) => c.byEnv[env]);
     const dependsOn = [...new Set(envs.flatMap((env) => c.byEnv[env]!.dependsOn))].sort();
-    const gatedEnvs = envs.filter((env) => plan.gated.includes(env));
+    const gatedEnvs = envs.filter((env) => plan.componentGated.includes(env));
     const gate =
       gatedEnvs.length > 0
         ? `{ kind: "gate", gate: "release", environments: { ${gatedEnvs.map((env) => `${JSON.stringify(env)}: { gate: ${JSON.stringify(env)}, description: ${JSON.stringify(`approve with ${releaseApproveLine(env)}`)} }`).join(", ")} } }, `
@@ -140,6 +166,32 @@ export function promotionComponentsText(plan: Pick<PromotionPlan, "components" |
 
 /** Whether `text` is a components file terragucci init wrote. */
 export const promotionComponentsWrittenByTerragucci = (text: string): boolean => text.startsWith(PROMOTION_MARKER);
+
+/** The environments a components file terragucci init wrote gives a gate step, read back from its gate steps' `environments`. */
+export function componentGateEnvironments(text: string): string[] {
+  const found = new Set<string>();
+  for (const step of text.matchAll(/\{ kind: "gate", gate: "release", environments: \{(.*?)\} \} \}/g)) {
+    for (const env of step[1]!.matchAll(/"([^"]+)": \{ gate: /g)) found.add(env[1]!);
+  }
+  return [...found];
+}
+
+/**
+ * Where a promote or rollback into `env` takes its approval: the
+ * components' release gate (`component`), the stage's gate in the pipeline
+ * chant reads at the default branch's tip (`stage`, with whether a rollback
+ * pauses the stage), or a refusal when `env` waits for a person and neither
+ * gates it. A components file the repo wrote itself keeps its own gates.
+ */
+export function releaseApproval(repo: string, env: string, settings: Pick<ProjectSettings, "environments" | "gate">): { via: "component" } | { via: "stage"; pauseAfterRollback: boolean } | { refused: string } {
+  const path = join(repo, PROMOTION_COMPONENTS);
+  const text = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  if (!promotionComponentsWrittenByTerragucci(text) || componentGateEnvironments(text).includes(env)) return { via: "component" };
+  if (stageGatePolicy(settings, env) === "never") return { via: "component" };
+  const stage = stageGateAtBase(repo, env);
+  if (stage.gated) return { via: "stage", pauseAfterRollback: stage.pauseAfterRollback };
+  return { refused: `${env}'s approval is its stage gate in .chant/pipeline.ts, which chant reads on the default branch, and ${stage.why}; run terragucci init, commit .chant/pipeline.ts with ${PROMOTION_COMPONENTS} and push them` };
+}
 
 // ── terragucci promote and rollback ─────────────────────────────────────────
 
@@ -192,6 +244,16 @@ export function releaseArgv(verb: "promote" | "rollback", line: ReleaseLine): st
   if (line.args.length !== 1) throw new ConfigError(`rollback takes one environment: ${usage}`);
   if (!release) throw new ConfigError(`rollback needs --release <label>, the earlier release ${line.args[0]} goes back to: ${usage}`);
   return ["components", "rollback", line.args[0]!, "--release", release, ...switches];
+}
+
+/**
+ * chant's command line for a rollback into a stage whose approval is the
+ * pipeline's: a promote of the earlier release, which passes the stage's
+ * gate, since chant's rollback passes the components' gates only.
+ */
+export function stageRollbackArgv(rollback: readonly string[]): string[] {
+  const [, , env, , release, ...switches] = rollback;
+  return ["components", "promote", "--to", env!, "--release", release!, ...switches];
 }
 
 /** Why a promote cannot run from `repo`, or undefined: no components file, or no terraform lexicon where chant looks for it. */

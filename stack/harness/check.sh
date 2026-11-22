@@ -225,13 +225,15 @@ tg_net() {
   [ -f "$BUNDLE" ] || { log "no $BUNDLE; run 'just build-cli' first"; return 1; }
   [ -n "$AUTHOR_TOKEN" ] || { log "TERRAGUCCI_FORGEJO_AUTHOR_TOKEN is not set; harness.ts passes forgejo.env"; return 1; }
   overlay="$(break_overlay)"
-  local -a mounts=(-v "$BUNDLE:/opt/tg/terragucci.mjs:ro")
+  # Under /usr/local, so the bundle resolves the image's /usr/local/node_modules as the image's own terragucci does.
+  local -a mounts=(-v "$BUNDLE:/usr/local/tg/terragucci.mjs:ro")
   [ -z "$overlay" ] || mounts+=(-v "$overlay:/break:ro")
+  [ ! -f "$ROOT/.chant-local/intentius-chant.tgz" ] || mounts+=(-v "$ROOT/.chant-local:/chant-local:ro")
   run_copied --rm ${tty[@]+"${tty[@]}"} --network "$TG_NETWORK" "${mounts[@]}" \
     -e "TERRAGUCCI_FORGEJO_TOKEN=$AUTHOR_TOKEN" -e "TG_CLONE=http://$AUTHOR:$AUTHOR_TOKEN@forgejo:3000/$REPO.git" -e "TG_AUTHOR=$AUTHOR" \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    --entrypoint sh "$image" -c 'mkdir -p /tmp/bin && printf "#!/bin/sh\nexec node /opt/tg/terragucci.mjs \"\$@\"\n" > /tmp/bin/terragucci && chmod +x /tmp/bin/terragucci && export PATH="/tmp/bin:$PATH" \
+    --entrypoint sh "$image" -c 'mkdir -p /tmp/bin && printf "#!/bin/sh\nexec node /usr/local/tg/terragucci.mjs \"\$@\"\n" > /tmp/bin/terragucci && chmod +x /tmp/bin/terragucci && export PATH="/tmp/bin:$PATH" \
       && git clone -q --branch main "$TG_CLONE" /tmp/repo >&2 && cd /tmp/repo \
       && { git fetch -q origin chant/lifecycle:chant/lifecycle 2>/dev/null || true; } \
       && git config user.name "$TG_AUTHOR" && git config user.email "$TG_AUTHOR@terragucci.local" \
@@ -543,7 +545,14 @@ case "${1:-}" in
     what="${1:?release cut|first|promote|rollback|approve|output ...}"; shift
     chant_pin="$(jq -r '.devDependencies["@intentius/chant"]' "$ROOT/package.json")"
     lexicon_pin="$(jq -r '.devDependencies["@intentius/chant-lexicon-terraform"]' "$ROOT/packages/terragucci/package.json")"
-    deps="npm i -q --no-save --no-audit --no-fund @intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin >&2"
+    tsx_pin="$(jq -r '.devDependencies.tsx' "$ROOT/package.json")"
+    chant_pkgs="@intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin"
+    # After `just chant-local`, the chant packed in .chant-local/ (tg_net mounts it at /chant-local).
+    if jq -e '.chantLocal' "$ROOT/node_modules/@intentius/chant/package.json" >/dev/null 2>&1; then
+      chant_pkgs="/chant-local/intentius-chant.tgz /chant-local/intentius-chant-lexicon-terraform.tgz"
+      log "release: the local chant $(jq -r '.chantLocal.commit' "$ROOT/node_modules/@intentius/chant/package.json")"
+    fi
+    deps="npm i -q --no-save --no-audit --no-fund $chant_pkgs tsx@$tsx_pin >&2"
     case "$what" in
       cut) line="$deps && FORGEJO_TOKEN=\"\$TERRAGUCCI_FORGEJO_TOKEN\" npx chant release cut ${1:?cut <label>} --yes --wait-checks && git push -q origin release/$1" ;;
       first) line="$deps && npx chant run --components all --env ${1:?first <env> <label>} --release ${2:?first <env> <label>}" ;;

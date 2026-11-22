@@ -30,7 +30,7 @@
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]]   (one job of chant's Op waves pipeline, terragucci's hooks in process)
- *   terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   (the tf-apply spec at a commit, which chant's renderSpec runs)
+ *   terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>] [--own-run-jobs <name,...>]   (the tf-apply spec at a commit, which chant's renderSpec runs)
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci ci [--check]   (write .chant/pipeline.ts from promotion, environments and waves in terragucci.yml; --check fails when the committed file is stale)
@@ -96,6 +96,7 @@
  *   terragucci notify unrecorded [--audit <dir>]   (post the state versions no wave or migration recorded that the audit run added to Slack and Teams; run after terragucci audit)
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
+ *   terragucci drift-agent show --report <dir>   (print what drifted, state against live, from the drift job's report; run by the generated drift script with agent.drift, so chant's drift agent reads it)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
  *   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (one table, filtered: chant's ledgers on chant/lifecycle (resources, snapshots, runs, gates, deploys, releases, cuts) or the reports bucket's (inventory, versions, changes, history, audit, edges); the "<sql>" form is deprecated)
  *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
@@ -141,7 +142,7 @@ import { pipelineCommand } from "./pipeline";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, approveRelease, isGateKeyword, overrideDenial } from "./approve";
-import { promoteAgentFactsEnv, releaseArgv, releaseRefusal, releaseWords } from "./promotion";
+import { promoteAgentFactsEnv, releaseApproval, releaseArgv, releaseRefusal, releaseWords, stageRollbackArgv } from "./promotion";
 import { decidePlanLock, reached } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
@@ -206,7 +207,7 @@ import { startRelay } from "./relay-host";
 import { mcp } from "./mcp";
 import { describeGuard, writeGuard } from "./guard";
 import { describeQuery, describeTable, isSql, query, readTable, SQL_DEPRECATED } from "./query";
-import { driftStarter, pushDriftChange, writeDriftPrompt } from "./drift-agent";
+import { driftStarter, pushDriftChange, showDrift, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
 import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
@@ -226,7 +227,7 @@ const USAGE = `usage:
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
   terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]]   one job of chant's Op waves pipeline, with terragucci's hooks in this process; chant's other run wave lines pass through
-  terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   print the tf-apply spec at a commit (default CHANT_WAVES_SPEC_AT, else HEAD), or nothing when the commit has none
+  terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>] [--own-run-jobs <name,...>]   print the tf-apply spec at a commit (default CHANT_WAVES_SPEC_AT, else HEAD), or nothing when the commit has none
   terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   the templates in the release catalog, with the versions a request may name and their form fields; read only
   terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   the apps made from templates, with their versions, add-ons and actions; read only
   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template, or with --app an add-on to that app
@@ -263,6 +264,7 @@ const USAGE = `usage:
   terragucci notify unrecorded [--audit <dir>]
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks through chant's relay; settings from TERRAGUCCI_RELAY_* and CHANT_RELAY_KEY in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
+  terragucci drift-agent show --report <dir>
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   one table's rows, filtered: resources, snapshots, runs, gates, deploys, releases or cuts from chant/lifecycle, or inventory, versions, changes, history, audit or edges from the reports bucket ("<sql>" is deprecated)
   terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   the repo's roots as one graph in behold, marked from the reports bucket, on your machine
@@ -278,7 +280,7 @@ const USAGE = `usage:
   terragucci rollback <env> --release <label> [--dry-run] [--json]   deploy an earlier release to <env>
     (export, unlock, action and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
-  terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml; --check fails when the committed file is stale
+  terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml, as init does; --check fails when the committed file is stale
   terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   turn down the release a stage's gate waits on
   terragucci pause <env> --reason <text>   stop releases entering a stage; terragucci resume <env> --reason <text> lets them in again
   terragucci release cut <label|auto> --yes | terragucci pipeline artifacts publish --stage <env>   (run by the merge's last wave with promotion: chant's release cut and artifacts publish)
@@ -491,7 +493,9 @@ export async function main(argv: string[]): Promise<number> {
   try {
     // `action --json` prints the action's own object (action.ts ActionJson), which behold and scripts read.
     // `run wave --json` is chant's own: it prints the wave's result, as `promote` and `rollback` print chant's plan and run.
-    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action" && cmd !== "run" && cmd !== "promote" && cmd !== "rollback") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
+    // `release` and `pipeline` are chant's too: the release cut compiles each environment as `<release.bin> release compile --json` (chant#5474).
+    const chantJson = ["action", "run", "promote", "rollback", "release", "pipeline"];
+    if (json && !ENVELOPE_COMMANDS.includes(cmd) && !chantJson.includes(cmd)) throw new ConfigError(`--json is not available on ${cmd || "help"}`);
     switch (cmd) {
       case "init": {
         const forge = str(flags, "forge");
@@ -1261,6 +1265,12 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`terragucci drift-agent: wrote the prompt for drift issue #${w.issue}, ${w.roots} root${w.roots === 1 ? "" : "s"} drifted`);
           return 0;
         }
+        if (sub === "show") {
+          const report = str(flags, "report");
+          if (!report) throw new ConfigError("drift-agent show needs --report <dir>");
+          process.stdout.write(showDrift(resolve(cwd, report)));
+          return 0;
+        }
         if (sub === "push") {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("drift-agent push needs --change <dir>");
@@ -1271,7 +1281,7 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`terragucci drift-agent: ${r.reason}`);
           return r.fail ? 1 : 0;
         }
-        throw new ConfigError("drift-agent is drift-agent prompt or drift-agent push");
+        throw new ConfigError("drift-agent is drift-agent prompt, drift-agent show or drift-agent push");
       }
       case "query": {
         const [what, extra] = args;
@@ -1373,7 +1383,9 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "waves-spec": {
         // chant's wave jobs (renderSpec, chant issue 4982) run this with CHANT_WAVES_SPEC_AT set, and read the tf-apply spec at that commit from what it prints.
-        return printWavesSpec(cwd, { ...(str(flags, "at") ? { at: str(flags, "at") } : {}), ...(str(flags, "spec") ? { specFile: str(flags, "spec") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}) });
+        // --own-run-jobs names the jobs of the run the release cut counts (terragucci#1531), which the workflow wrote in.
+        const own = (str(flags, "own-run-jobs") ?? "").split(",").map((j) => j.trim()).filter(Boolean);
+        return printWavesSpec(cwd, { ...(str(flags, "at") ? { at: str(flags, "at") } : {}), ...(str(flags, "spec") ? { specFile: str(flags, "spec") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(own.length ? { ownRunJobs: own } : {}) });
       }
       case "run": {
         // chant's Op waves jobs run `terragucci run wave ...`: chant's wave runner in this process, with terragucci's words and its wave hook.
@@ -1389,10 +1401,20 @@ export async function main(argv: string[]): Promise<number> {
         const chantArgv = releaseArgv(verb, { args, flags });
         const refused = releaseRefusal(cwd);
         if (refused) throw new ConfigError(`${verb}: ${refused}`);
+        const path = findConfig(cwd);
+        const settings = path ? resolveRepo(await loadConfig(resolve(path))) : {};
+        // One approval per stage: the stage's gate in .chant/pipeline.ts when the components carry none, else the components' release gate.
+        const env = verb === "promote" ? chantArgv[3]! : chantArgv[2]!;
+        const approval = releaseApproval(cwd, env, settings);
+        if ("refused" in approval) throw new ConfigError(`${verb}: ${approval.refused}`);
         // agent.verify-failed (chant#5339): the promote records a failed verify or soak as a fact for the agent.
-        if (verb === "promote") {
-          const path = findConfig(cwd);
-          if (path) Object.assign(process.env, promoteAgentFactsEnv(resolveRepo(await loadConfig(resolve(path))), process.env));
+        if (verb === "promote") Object.assign(process.env, promoteAgentFactsEnv(settings, process.env));
+        if (verb === "rollback" && approval.via === "stage") {
+          const release = chantArgv[4]!;
+          const code = await runChantInProcess(stageRollbackArgv(chantArgv), releaseWords(TERRAGUCCI_WORDS));
+          // pause_after_rollback: chant's rollback pauses the stage; a rollback through the stage's gate pauses it here.
+          if (code !== 0 || !approval.pauseAfterRollback || flags["dry-run"] === true) return code;
+          return runChantInProcess(["stage", "pause", env, "--reason", `rolled back to release ${release}`], TERRAGUCCI_WORDS);
         }
         return runChantInProcess(chantArgv, releaseWords(TERRAGUCCI_WORDS));
       }

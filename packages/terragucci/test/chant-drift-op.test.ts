@@ -1,10 +1,11 @@
 // terragucci#1305 and chant issue 4622: every scheduled drift job is a chant drift Op; with agent.drift it rides chant's agent job (chant#4616).
 import { describe, expect, it } from "vitest";
+import { parseYAML } from "@intentius/chant/yaml";
 import { agentDriftInput } from "../src/agent-comment";
 import { type ChantAgentJob, type ChantScheduledOpSpec } from "../src/chant-next";
 import { validateConfig } from "../src/config";
 import { AGENT_RUN_LEDGERS } from "../src/report/audit";
-import { CHANT_DRIFT_OP, CHANT_DRIFT_OP_FILE, CHANT_DRIFT_PATHS, CHANT_DRIFT_SCRIPT_FILE, CHANT_DRIFT_SPEC_FILE, chantDriftFiles, chantDriftOpFile, rootDriftOpName } from "../src/render-chant-drift";
+import { CHANT_DRIFT_EXIT, CHANT_DRIFT_OP, CHANT_DRIFT_OP_FILE, CHANT_DRIFT_PATHS, CHANT_DRIFT_SCRIPT_FILE, CHANT_DRIFT_SPEC_FILE, chantDriftFiles, chantDriftOpFile, rootDriftOpName } from "../src/render-chant-drift";
 import { driftScript, MARKER, renderPipeline } from "../src/render";
 
 const agent = agentDriftInput(validateConfig({ drift: "0 6 * * *", respond: { drift: "off" }, agent: { via: "forge", token_env: "AGENT_FORGE_TOKEN", drift: { max_cost_usd: 2 } } }, "t"))!;
@@ -115,5 +116,26 @@ describe("the drift job as a chant drift Op", () => {
     expect(chantDriftOpFile(["net", "app/web"], MARKER)).toContain('TerraformWatchOp({ name: "terragucci-drift-app-web", root: "app/web" })');
     expect(AGENT_RUN_LEDGERS["local/runs__terragucci-drift.jsonl"]).toBe("agent.drift");
     expect(driftScript("tofu", [["net"]], "github", undefined, {}, undefined, false, "chant")).toContain('exit "$rc"');
+  });
+});
+
+// terragucci#1528: chant's drift Op ends the drift job green on the drift code and renders the found job that keeps the run red; terragucci's script only hands chant the code.
+describe("the drift agent's jobs read the drift job's outputs from a job that succeeded", () => {
+  type Job = { needs?: string | string[]; if?: string; outputs?: Record<string, string>; steps?: { id?: string; run?: string }[] };
+  it.each(["github", "forgejo"] as const)("%s: chant renders the found job, the agent job reads the drift output, and the script exits with chant's drift code", (forge) => {
+    const out = renderPipeline({ ...input, forge });
+    const wf = parseYAML(out.extra!.find((f) => f.path === CHANT_DRIFT_PATHS[forge])!.content) as { jobs: Record<string, Job> };
+    const drift = wf.jobs[CHANT_DRIFT_OP]!;
+    expect(drift.outputs!.drift).toBe("${{ steps.chant-run.outputs.drift }}");
+    const run = drift.steps!.find((s) => s.id === "chant-run")!.run!;
+    expect(run).toContain(`bash ${CHANT_DRIFT_SCRIPT_FILE}`);
+    expect(run).toContain('if [ "$code" -eq 2 ]; then echo "drift=true" >>"$GITHUB_OUTPUT"; fi');
+    expect(run).toContain('if [ "$code" -eq 2 ]; then exit 0; fi');
+    expect(wf.jobs[`${CHANT_DRIFT_OP}-found`]).toMatchObject({ needs: CHANT_DRIFT_OP, if: `needs.${CHANT_DRIFT_OP}.outputs.drift == 'true'` });
+    expect(wf.jobs[`${CHANT_DRIFT_OP}-found`]!.steps!.at(-1)!.run).toMatch(/exit 2$/);
+    expect(wf.jobs[`${CHANT_DRIFT_OP}-agent`]!.if).toBe(`always() && needs.${CHANT_DRIFT_OP}.outputs.drift == 'true'`);
+    const script = out.extra!.find((f) => f.path === CHANT_DRIFT_SCRIPT_FILE)!.content;
+    expect(script).toContain(`then rc=${CHANT_DRIFT_EXIT}; fi`);
+    expect(script.trimEnd().split("\n").at(-1)).toBe('exit "$rc"');
   });
 });

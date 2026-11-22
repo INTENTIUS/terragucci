@@ -331,7 +331,7 @@ The check catches a mistake: a hand edit to the workflow, a renamed job, a dropp
 | Variable | Set for |
 |---|---|
 | `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent's step of `agent.comment` and `agent.drift`: the prompt's path and the turn limit |
-| `TG_ISSUE` | `drift-agent-push`: the drift issue the drift job opened, which the pull request names and is linked on |
+| `TG_ISSUE` | `terragucci drift-agent push`: the drift issue the drift job opened, which the pull request names and is linked on |
 | `TG_AGENT_MAX_COST_USD` | the agent's step, when `max_cost_usd` is set: the most the run may spend, in US dollars ([A money limit](/terragucci/guides/send-traces-and-metrics/#a-money-limit)) |
 | `TG_AGENT_USAGE` | the agent's step and the review's step: the path a command may write its `usage.json` to, with `model`, `cost_usd`, `input_tokens` and `output_tokens` |
 | `TG_AGENT_ACTOR` | a job you write with `terragucci agent record`: the agent's forge login, which the record names as its actor in place of the user `TG_TOKEN` acts as |
@@ -393,7 +393,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TG_PLAN_JSON` |  | set for the `cost.command` estimator: the path of the root's stored plan, `show -json` with sensitive values redacted; `TG_ROOT` names the root |
 | `TG_STAGE`, `TG_ROOT`, `TG_REPO`, `TG_PLAN_FILE` |  | set for a [hook](/terragucci/guides/run-steps/): the stage (`tf-plan`, `tf-apply` or `tf-drift`), the root, the checkout's path and, after a plan and before an apply, the plan file; chant's `CHANT_HOOK` names the moment |
 | `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `terragucci approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
-| `GITHUB_TRIGGERING_ACTOR`, else `GITHUB_ACTOR` |  | in `drift-agent-push`, when `GITHUB_EVENT_NAME` is `workflow_dispatch`: the person who started the drift run, named in the agent commit's `Requested-by:` trailer, whose review of the pull request then doesn't count |
+| `GITHUB_TRIGGERING_ACTOR`, else `GITHUB_ACTOR` |  | in `terragucci-drift-agent-push`, when `GITHUB_EVENT_NAME` is `workflow_dispatch`: the person who started the drift run, named in the agent commit's `Requested-by:` trailer, whose review of the pull request then doesn't count |
 | `env:` in the config |  | variables every job gets; values only, never secrets |
 
 ## Forge variables

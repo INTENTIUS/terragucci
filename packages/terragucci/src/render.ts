@@ -202,7 +202,7 @@ import { driftWatch } from "./report/overdue";
 import type { AgentCommentInput, AgentScheduleInput, AgentTriggerInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { chantFactsFiles, waveAgentFacts } from "./render-chant-agent-triggers";
-import { chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
+import { CHANT_DRIFT_EXIT, chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { commentLine, productPipelineJobs, type CiProductCommand, type WaveSummarySpec } from "@intentius/chant/ci-product";
@@ -1319,6 +1319,8 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     // With agent.drift, the step's outputs say whether this run opened the drift issue, and which; the drift-agent jobs run when it did.
     // On chant's drift Op (terragucci#1305) the run exits with chant's drift code instead, which starts chant's agent jobs.
     ...(agent === "chant" ? chantDriftExitLines(DRIFT_ISSUE_JS, `${REPORT_DIR}/${DRIFT_ISSUE_FILE}`) : []),
+    // chant's agent job reads this run's output into the agent's prompt; the stage says only how many resources drifted, so list what drifted, state against live (terragucci#1517).
+    ...(agent === "chant" ? [`if [ "$rc" -eq ${CHANT_DRIFT_EXIT} ]; then terragucci drift-agent show --report ${REPORT_DIR} || true; fi`] : []),
     ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${report.synth === ATMOS_WRITE ? ATMOS_DRIFT_PR_SHORT : SYNTH_DRIFT_PR_SHORT}"`] : []),
     // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),

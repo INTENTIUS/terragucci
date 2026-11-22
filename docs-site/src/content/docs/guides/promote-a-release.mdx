@@ -12,7 +12,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-A release holds the files of one commit for each environment. It moves through the environments in the order `promotion` lists. Staging gets the staging roots' files only, never dev's. An environment with a gate waits until a person approves the plan for it. `terragucci rollback` puts an earlier release back in one environment, behind the same gate.
+A release holds the files of one commit for each environment. It moves through the environments in the order `promotion` lists. Staging gets the staging roots' files only, never dev's. A person approves each release once for an environment with a gate. `terragucci rollback` puts an earlier release back in one environment, behind the same gate.
 
 [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) records each deploy with the release, the person who ran it and the approver.
 
@@ -39,11 +39,11 @@ A release holds the files of one commit for each environment. It moves through t
    promotion: [dev, staging, prod]
    ```
 
-   Run `npx terragucci init` and `npx terragucci ci`, and commit what they write. `chant.config.ts` lists the environments in that order, `terragucci.component.ts` holds each root as a component ([The components](#the-components)), and `.chant/pipeline.ts` has one stage per environment.
+   Run `npx terragucci init` and commit what it writes. `chant.config.ts` lists the environments in that order, `terragucci.component.ts` holds each root as a component ([The components](#the-components)), and `.chant/pipeline.ts` has one stage per environment. After a change to `terragucci.yml`, `npx terragucci ci` writes the pipeline again.
 
    From then on, each merge applies dev and then cuts a release of the merge commit, labelled with the next version; the apply job's log names it.
 
-   `chant.config.ts` also sets `release: { green: "forge-checks" }`. The cut's green gate is then the merge commit's checks on the forge: it waits while they run and cuts once they pass, reading them with the apply job's forge token, so the repository needs no `ci/green` tag. On GitHub the apply jobs get read access to checks, statuses and actions for it. When `chant.config.ts` is the repo's own, `init` names the line to add. Steps 2 and 3 are for `release: { cut: false }`, or a release of another commit.
+   `chant.config.ts` also sets `release: { green: "forge-checks" }`. The cut's green gate is then the merge commit's checks on the forge, among them the `check` job and the earlier wave jobs of the run that applies: it waits while they run and cuts once they pass, reading them with the apply job's forge token, so the repository needs no `ci/green` tag. On GitHub the apply jobs get read access to checks, statuses and actions for it. When `chant.config.ts` is the repo's own, `init` names the line to add. Steps 2 and 3 are for `release: { cut: false }`, or a release of another commit.
 
 2. Cut a release from a commit of the default branch whose checks passed, in a clean checkout of that commit:
 
@@ -67,22 +67,21 @@ A release holds the files of one commit for each environment. It moves through t
    npx terragucci promote --to staging --release v1.4.0
    ```
 
-   `--dry-run` prints the plan and changes nothing. Under a gate, the promote plans the staging roots and exits 3:
+   `--dry-run` prints the plan and changes nothing. Under a gate, the promote stops at the staging stage and exits 3:
 
    ```text
-   warning: component "envs-network" is gated on "staging" — pending approval
-   approve : terragucci approve release staging
-   then run the same promote again
+   error: tf-apply staging waits for an approval of jcs1-sha256:fc692c3f… [pipeline-gate-waiting]
+     Approve it with: terragucci approve release staging
    ```
 
-5. A reviewer approves the plan. Then the same promote applies:
+5. A reviewer approves the release for staging. Then the same promote applies:
 
    ```bash
    npx terragucci approve release staging
    npx terragucci promote --to staging --release v1.4.0
    ```
 
-   The approval holds for the change set that promote planned, for that release in that environment. A plan that differs on the next run asks again.
+   The approval holds for that release in staging, and the promote spends it. Nothing else waits, so the promote applies straight after it.
 
 6. Repeat for `prod`. A promote that skips an environment, such as `--to prod` while staging has not run the release, is refused; `--allow-skip` lets it through.
 
@@ -95,13 +94,15 @@ npx terragucci rollback prod --release v1.3.0 --dry-run
 npx terragucci rollback prod --release v1.3.0
 ```
 
-prod gets the files `v1.3.0` recorded for it. The rollback waits at prod's gate like a promote: approve it with `terragucci approve release prod` and run the same rollback again. The deploy record then names `v1.3.0` as the version prod runs.
+prod gets the files `v1.3.0` recorded for it. The rollback waits for one approval like a promote: approve it with `terragucci approve release prod` and run the same rollback again. The deploy record then names `v1.3.0` as the version prod runs. With `pause_after_rollback` on prod, the rollback then pauses the stage until `terragucci resume prod`.
 
 ## The components
 
 `init` names each root's component by its path with the segment that names its environment taken out: `envs/dev/network` and `envs/prod/network` are both `envs-network`. A promote to staging takes `envs-network` as dev recorded it and applies `envs/staging/network`. A root whose path has no segment named for its environment keeps its whole path as its name, and `init` says so when a later environment has a component the one before it lacks.
 
-An environment waits for an approval unless its gate is `never`. With no gate of its own, it takes the top-level `gate`. A promote plans the environment's roots as one change set, so `on-destructive` asks on any change.
+An environment waits for one approval unless its gate is `never`. With no gate of its own, it takes the top-level `gate`. That approval belongs to the environment's stage in `.chant/pipeline.ts`. `init` writes the pipeline and the components from one `terragucci.yml`, so they agree on which environments wait. A promote asks before it plans, so `on-destructive` asks on every promote.
+
+A promote or rollback reads `.chant/pipeline.ts` on the default branch first, as chant does, so push the pipeline with the components. When `.chant/pipeline.ts` is the repo's own, `init` keeps it and adds a gate step to the components for each environment that waits.
 
 ## Keep later environments to promotes
 

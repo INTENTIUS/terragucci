@@ -3724,7 +3724,7 @@
         "type": "string",
         "pattern": "^[a-z0-9_-]+$"
       },
-      "description": "The order a release moves through the environments, first to last: names of environments, each once. With it, terragucci ci writes .chant/pipeline.ts."
+      "description": "The order a release moves through the environments, first to last: names of environments, each once. With it, terragucci init and terragucci ci write .chant/pipeline.ts."
     },
     "risk": {
       "type": "object",
@@ -7330,7 +7330,7 @@
             "type": "string",
             "pattern": "^[a-z0-9_-]+$"
           },
-          "description": "The order a release moves through the environments, first to last: names of environments, each once. With it, terragucci ci writes .chant/pipeline.ts."
+          "description": "The order a release moves through the environments, first to last: names of environments, each once. With it, terragucci init and terragucci ci write .chant/pipeline.ts."
         },
         "risk": {
           "type": "object",

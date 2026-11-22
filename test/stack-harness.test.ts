@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
 import { bareVersion, breakVerdict, parseClaimsTable, parseSmokeLine, plainVerdict, rowEngine, saysBinary, smokeClaimRun, smokeRows, smokeScenario } from "../stack/harness/rows";
 import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath, SOURCE_PATTERN, TERRAGUCCI_STEPS, TREE_OVERLAY } from "../stack/harness/scenarios";
+import { harnessStateDir, stackStateDir } from "../stack/harness/state";
 import { forgeServices, JOB_CACHE_VOLUME, PROFILES, STACK_PORTS, type HarnessStackFn, type ServiceSpec } from "../stack/harness/stack-spec";
 
 const root = join(__dirname, "..");
@@ -430,5 +431,19 @@ describe("the terralith, for scale alone", () => {
     // An event is a key of on:, two spaces in; the dispatch's release input is deeper.
     expect(wf).not.toMatch(/^ {2}release:/m);
     expect(wf).not.toContain("github.event.release");
+  });
+});
+
+describe("where the harness keeps its files", () => {
+  it("reads the stack's files from the stack's own state directory", () => {
+    expect(stackStateDir("/r", {})).toBe("/r/stack/.state");
+    expect(stackStateDir("/r", { TG_STACK: "capture" })).toBe("/r/stack/.state-capture");
+    expect(stackStateDir("/r", { TG_STATE: "/elsewhere" })).toBe("/r/stack/.state");
+    expect(() => stackStateDir("/r", { TG_STACK: "other" })).toThrow(/shared \(the default\) or capture/);
+  });
+
+  it("keeps its own work under the caller's TG_STATE", () => {
+    expect(harnessStateDir("/r", { TG_STATE: "/elsewhere" })).toBe("/elsewhere");
+    expect(harnessStateDir("/r", {})).toBe("/r/stack/.state");
   });
 });

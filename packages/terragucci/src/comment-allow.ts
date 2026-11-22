@@ -38,7 +38,7 @@ export const COMMENT_ALLOW_CHANT_FLOOR = "0.124.98";
  * two equal). It is written out here because the config types are emitted from config.ts, which reaches this file,
  * and a JSON import from outside src/ would move the emitted types.
  */
-export const CHANT_PIN = "0.124.115";
+export const CHANT_PIN = "0.124.116";
 
 /** Whether chant release `have` is `floor` or newer. A version that does not read as `a.b.c` is older than any floor. */
 export function chantAtLeast(have: string, floor: string): boolean {

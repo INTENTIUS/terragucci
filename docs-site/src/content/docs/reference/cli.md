@@ -108,7 +108,7 @@ The approval mode decides what else `init` writes.
 
 ### The promotion components
 
-With [`promotion`](/terragucci/reference/config/#promotion) set, `init` also writes `terragucci.component.ts` at the repo's root and lists the environments in that order under `environments` in `chant.config.ts`, with `lexicons: ["terraform"]`. The file holds each root of those environments as a chant component that applies the root of the environment chant deploys, and a gate named after each environment whose gate is not `never`. `init` replaces it only when terragucci wrote it, and removes it when `promotion` is taken out. [Promote a release through environments](/terragucci/guides/promote-a-release/#the-components) says how components are named.
+With [`promotion`](/terragucci/reference/config/#promotion) set, `init` also writes `terragucci.component.ts` at the repo's root and lists the environments in that order under `environments` in `chant.config.ts`, with `lexicons: ["terraform"]`. The file holds each root of those environments as a chant component that applies the root of the environment chant deploys. `init` writes `.chant/pipeline.ts` beside it, as [`ci`](#ci) does, and each environment whose gate is not `never` is approved once, at its stage's gate there. When `.chant/pipeline.ts` is the repo's own, `init` keeps it and gives the components a gate named after each such environment. `init` replaces the components file only when terragucci wrote it, and removes it when `promotion` is taken out. [Promote a release through environments](/terragucci/guides/promote-a-release/#the-components) says how components are named.
 
 ### The components file
 
@@ -550,7 +550,7 @@ chant's `components` commands in terragucci's words. chant's `plan-note` job run
 terragucci ci [--check] [--config <file>]
 ```
 
-Writes `.chant/pipeline.ts` with chant's `pipelineSource`, one stage per environment of `promotion` ([Stages](/terragucci/reference/config/#stages)). Each stage's waves are the committed waves spec's, cut to the environment's roots, so run `terragucci init` first. With `--check` it writes nothing and exits 1 when the committed file is missing or differs, printing the lines that differ. The environments' `config`, `secrets` and `imports`, and `config_sets`, go to `ci.environmentSets` in `chant.workspace.json` the same way. With no `promotion` there is no pipeline file, and the command says so and exits 0.
+Writes `.chant/pipeline.ts` with chant's `pipelineSource`, one stage per environment of `promotion` ([Stages](/terragucci/reference/config/#stages)). Each stage's waves are the committed waves spec's, cut to the environment's roots, so run `terragucci init` first; `init` writes the same file. With `--check` it writes nothing and exits 1 when the committed file is missing or differs, printing the lines that differ. The environments' `config`, `secrets` and `imports`, and `config_sets`, go to `ci.environmentSets` in `chant.workspace.json` the same way. With no `promotion` there is no pipeline file, and the command says so and exits 0.
 
 `terragucci ci check` and `terragucci ci evidence` are the check job's and the evidence jobs' steps.
 
@@ -589,7 +589,7 @@ With `--render-spec`, chant reads the spec that [`waves-spec`](#waves-spec) prin
 ## waves-spec
 
 ```text
-terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]
+terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>] [--own-run-jobs <name,...>]
 ```
 
 | Flag | Environment | Meaning |
@@ -597,12 +597,15 @@ terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]
 | `--at` | `CHANT_WAVES_SPEC_AT` | the commit to read the spec at; default `HEAD` |
 | `--spec` | `CHANT_WAVES_SPEC_FILE` | the spec file; default `.chant/op-waves/tf-apply.spec.json` |
 | `--config` | | the config file, when it is not at the repo root |
+| `--own-run-jobs` | | the jobs of the wave's own run that the merge's release cut counts, comma-separated; the workflow `init` writes names them |
 
 Prints the `tf-apply` Op waves spec at a commit, which chant's wave jobs read their rules from. Everything in it comes from that commit, never from the working tree. The waves, their roots, shares and job groups are the spec file `init` commits there. The rules are `terragucci.yml` there:
 
 - each wave's gate, the stricter of the spec's and the top-level `gate`, or with `environments` the strictest of its roots';
 - the approval mode, `approval_rules` and the agent's account;
 - `apply.point`, `apply.branches` (the job's branch applies only its roots), `apply.resume` and `notify`.
+
+With `promotion`, the last wave cuts the release after its apply, inside the run that applied it. Under `release.green: forge-checks` that cut counts the merge commit's checks from other workflows and the jobs `--own-run-jobs` names: the workflow `init` writes names the `check` job and every wave job the last wave waits for, each of which must have passed.
 
 Each root's workspace and Atmos reads come from the checkout. Wave 1 always carries the state migration hooks, which find no migration and do nothing when the change has none. The spec carries chant's spend rules (`approvals.spend`, `remainder` and `spendStanding`), so the rest of a stopped apply applies under its approval at the same commit.
 
@@ -803,14 +806,16 @@ The command writes nothing to the repo. behold refuses to deploy, approve or sta
 
 ```text
 terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
+terragucci drift-agent show --report <dir>
 terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
 ```
 
-Two generated jobs, `drift-agent` and `drift-agent-push`, run the halves of the [drift agent](/terragucci/guides/agent-fix-drift/).
+The [drift agent](/terragucci/guides/agent-fix-drift/)'s jobs are chant's `terragucci-drift-agent` and `terragucci-drift-agent-push`, in `terragucci-drift.yml`. The drift script runs `drift-agent show`; `prompt` and `push` run in a job you write.
 
 | Command | Does |
 |---|---|
 | `drift-agent prompt` | reads `report.json` and `issue.json` from the drift job's report in `--report`, and writes the prompt to `--out`: each drifted resource with the state's value and the live one, never a sensitive one; exits 1 when the run opened no drift issue |
+| `drift-agent show` | reads `report.json` from the drift job's report in `--report` and prints each drifted resource with the state's value and the live one, never a sensitive one. With `agent.drift` the drift script runs it when the run opened the drift issue, so [chant's drift agent](/terragucci/guides/agent-fix-drift/#the-jobs) reads the values in the run's output |
 | `drift-agent push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them; commits a passing patch on top of `TG_SHA` to `terragucci/drift-agent-<issue>`, pushes it without force with `TG_TOKEN`, opens the pull request and comments its link on the issue `TG_ISSUE` names |
 
 ## config check
@@ -970,7 +975,7 @@ terragucci approve release <env> [--plan <digest>] [--sign]
 | `unlock <root>` | the release of the lock [`unlock-state`](#unlock-state) found on `<root>` |
 | `ephemeral <pr>` | the plans of pull request `<pr>`'s [ephemeral environment](#ephemeral): it approves gate `pr-env` of op `pr-<pr>` for the digest the job printed |
 | `ephemeral <pr>` | pull request `<pr>`'s [ephemeral environment](#ephemeral) |
-| `release <env>` | the release gate a [promote or rollback](#promote-and-rollback) into `<env>` waits at: it approves the change set that run planned for its release in `<env>`. With `--plan`, only that digest |
+| `release <env>` | the gate a [promote or rollback](#promote-and-rollback) into `<env>` waits at: the stage's gate in `.chant/pipeline.ts`, for that release in `<env>`, or the components' release gate beside a pipeline the repo wrote itself. With `--plan`, only that digest |
 | `--dry-run` | print what it would approve and record nothing |
 | `--no-resume` | record the approval only; by default it then starts the wave again with your forge token ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)) |
 
@@ -1008,7 +1013,7 @@ Deploy a release to one environment of [`promotion`](/terragucci/reference/confi
 | `--dry-run` | print each component, the release and where it was deployed from, and change nothing |
 | `--json` | chant's plan and result as JSON |
 
-An environment whose gate is not `never` stops before it applies and exits 3, naming `terragucci approve release <env>`; run the same command again once it is approved. Each deploy records the release the environment runs on `chant/lifecycle`. Both commands need `terragucci.component.ts`, which [`init`](#init) writes from `promotion`, and `@intentius/chant-lexicon-terraform` installed beside terragucci; without either they exit 1 and say what to do.
+An environment whose gate is not `never` stops once, at its stage's gate, before it applies and exits 3, naming `terragucci approve release <env>`; run the same command again once it is approved. Each command first reads `.chant/pipeline.ts` on the default branch and exits 1 unless it gates that environment. A rollback into such an environment deploys the earlier release through the stage's gate, and pauses the stage afterwards when it sets `pause_after_rollback`. Each deploy records the release the environment runs on `chant/lifecycle`. Both commands need `terragucci.component.ts`, which [`init`](#init) writes from `promotion`, and `@intentius/chant-lexicon-terraform` installed beside terragucci; without either they exit 1 and say what to do.
 
 ## migrate
 

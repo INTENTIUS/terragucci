@@ -150,6 +150,17 @@ ensure_ci_image() {
     (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null && npx tsx scripts/images.ts build >/dev/null 2>&1) \
       || die "the CI images did not build; run 'just images' to see why"
   fi
+  # After `just chant-local` the jobs run the local chant too: the image takes
+  # the tarballs in .chant-local/ on top, under its own tag (stack/chant-local.Dockerfile).
+  local chant_version have
+  chant_version="$(cd "$HERE/.." && npx chant dev local-image)" || die "cannot read the chant the CI image should carry"
+  have="$(docker image inspect -f '{{index .Config.Labels "terragucci.chant-local"}}' "$ref" 2>/dev/null || true)"
+  if [ "${chant_version#local-}" != "$chant_version" ] && [ "$have" != "$chant_version" ]; then
+    log "adding chant $chant_version to $ref…"
+    (cd "$HERE/.." && npx chant dev local-image -- -q --label "terragucci.chant-local=$chant_version" \
+      --build-arg "BASE=$ref" --build-arg "HCL2JSON=$(jq -r '.devDependencies["@cdktn/hcl2json"]' packages/terragucci/package.json)" \
+      -f stack/chant-local.Dockerfile -t "$ref" stack) >&2 || die "the CI image did not take the local chant"
+  fi
   CI_IMAGE="$ref"
 }
 

@@ -812,7 +812,7 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
       minItems: 2,
       uniqueItems: true,
       items: pat(ENVIRONMENT_NAME),
-      description: "The order a release moves through the environments, first to last: names of environments, each once. With it, terragucci ci writes .chant/pipeline.ts.",
+      description: "The order a release moves through the environments, first to last: names of environments, each once. With it, terragucci init and terragucci ci write .chant/pipeline.ts.",
     },
     risk: { ...risk(false), description: "risk.approve_above: the change risk score above which a wave needs an approval of its own." },
     replan_dependents: { type: "array", minItems: 1, items: glob, description: "The roots whose dependents are planned again when an output they read changes after an apply." },

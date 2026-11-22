@@ -2506,22 +2506,26 @@ claim_agent/drift() {
   # turns agent.drift on with a stand-in agent: .smoke/drift-agent.sh reads
   # the prompt on stdin, and when it names visibility_timeout_seconds as live
   # 45 it sets the root's timeout to 45. The stand-in also says whether its
-  # step holds any forge token and, if it does, pushes the branch
+  # command holds any forge token and, if it does, pushes the branch
   # agent-direct with it. respond.drift is off. The agent's token
   # (AGENT_TOKEN) is the admin's.
+  # init writes the drift job as chant's drift Op in
+  # .forgejo/workflows/terragucci-drift.yml, with chant's agent jobs
+  # terragucci-drift-agent and terragucci-drift-agent-push after it.
   # The push to main applies the queue; then the timeout goes to 45 outside
   # OpenTofu, and the drift workflow runs once (workflow_dispatch). Its drift
-  # job opens the drift issue, the drift-agent job runs the stand-in, and the
-  # drift-agent-push job opens a pull request from terragucci/drift-agent-<n>
-  # that sets the timeout to 45, comments its link on the issue, and the pull
-  # request gets its own terragucci/plan statuses. main does not move, and no
-  # agent-direct branch exists.
-  # BREAK: the pushed pipeline gives the agent's step the agent's token
-  # (TG_TOKEN), so the stand-in pushes agent-direct itself.
+  # job opens the drift issue and shows what drifted in its output, the agent
+  # job runs the stand-in on that output, and the push job opens a pull
+  # request from terragucci/agent/terragucci-drift that sets the timeout to
+  # 45, and the pull request gets its own terragucci/plan statuses. main does
+  # not move, and no agent-direct branch exists.
+  # BREAK: the pushed pipeline puts the agent's token (AGENT_TOKEN) in the
+  # model key's variable, the one variable chant passes to the agent's
+  # command, so the stand-in pushes agent-direct itself.
   log() { echo "[smoke drift-agent] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/drift-agent" queue="tg-drift-agent-$STAMP" key="respond/drift-agent-$STAMP.tfstate" url main_sha run status issue pr head i rc=0 wf s
+  local work repo="$USER/drift-agent" queue="tg-drift-agent-$STAMP" key="respond/drift-agent-$STAMP.tfstate" url main_sha run status jobs issue pr head i rc=0 wf s branch=terragucci/agent/terragucci-drift
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo drift-agent || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true,"has_issues":true}' "$URL/api/v1/repos/$repo"
@@ -2538,15 +2542,18 @@ claim_agent/drift() {
   cat > "$work/tree/.smoke/drift-agent.sh" <<'SH'
 #!/bin/sh
 # A stand-in drift agent: the prompt comes on stdin, and it edits one file.
+# Its model key is "stand-in"; any other value there is a token it was handed.
 prompt="$(cat)"
 held=""
-for v in GITHUB_TOKEN FORGEJO_TOKEN GITEA_TOKEN TG_TOKEN ACTIONS_RUNTIME_TOKEN; do
+tok=""
+for v in GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN TG_TOKEN ACTIONS_RUNTIME_TOKEN; do
   eval "x=\${$v:-}"
-  [ -n "$x" ] && held="$held $v"
+  [ -n "$x" ] && held="$held $v" && tok="$x"
 done
-echo "stand-in drift agent: forge tokens in its step:${held:- none}"
-if [ -n "${TG_TOKEN:-}" ]; then
-  git -c "http.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 -w0)" push -q "http://forgejo:3000/$GITHUB_REPOSITORY.git" HEAD:refs/heads/agent-direct \
+if [ -n "${AGENT_KEY:-}" ] && [ "$AGENT_KEY" != stand-in ]; then held="$held AGENT_KEY"; tok="$AGENT_KEY"; fi
+echo "stand-in drift agent: forge tokens in its command:${held:- none}"
+if [ -n "$tok" ]; then
+  git -c "http.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$tok" | base64 -w0)" push -q "$(git remote get-url origin)" HEAD:refs/heads/agent-direct \
     && echo "stand-in drift agent: pushed agent-direct with its own token"
 fi
 if printf '%s\n' "$prompt" | grep -q 'visibility_timeout_seconds: state 30, live 45'; then
@@ -2556,13 +2563,16 @@ fi
 SH
   printf 'gate: never\ndrift: "0 6 * * *"\nrespond:\n  drift: off\nagent:\n  via: forge\n  token_env: AGENT_TOKEN\n  drift:\n    command: sh .smoke/drift-agent.sh\n    key_secret: AGENT_KEY\n    timeout: 10\n' >> "$work/tree/terragucci.yml"
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
-  wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  grep -q '^  drift-agent-push:' "$wf" || { log "the pipeline has no drift-agent-push job"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci-drift.yml"
+  grep -q '^  terragucci-drift-agent:' "$wf" || { log "the drift workflow has no terragucci-drift-agent job"; drop_work "$work"; return 1; }
+  grep -q '^  terragucci-drift-agent-push:' "$wf" || { log "the drift workflow has no terragucci-drift-agent-push job"; drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    # The agent's step gets the agent's token beside the model's key.
-    awk '/^  drift-agent:/ { job = 1 } /^  drift-agent-push:/ { job = 0 } job && /^ +AGENT_KEY: / { print; match($0, /^ */); print substr($0, 1, RLENGTH) "TG_TOKEN: ${{ secrets.AGENT_TOKEN }}"; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
-    grep -q 'TG_TOKEN: \${{ secrets.AGENT_TOKEN }}' "$wf" || { log "could not give the agent's step the token"; drop_work "$work"; return 1; }
+    # The agent's command gets the agent's token in place of the model's key.
+    awk '/^  terragucci-drift-agent:/ { job = 1 } /^  terragucci-drift-agent-push:/ { job = 0 } job && /^ +AGENT_KEY: / { match($0, /^ */); print substr($0, 1, RLENGTH) "AGENT_KEY: ${{ secrets.AGENT_TOKEN }}"; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'AGENT_KEY: \${{ secrets.AGENT_TOKEN }}' "$wf" || { log "could not give the agent's command the token"; drop_work "$work"; return 1; }
   fi
+  # The gate policy is read at HEAD^1, so the push to main needs a parent: a base commit first, with no run.
+  push_tree "$work/tree" "$repo" main "drift-agent: the base [skip ci]" >/dev/null || { drop_work "$work"; return 1; }
   main_sha="$(push_tree "$work/tree" "$repo" main "drift-agent: a queue with a timeout of 30")" || { drop_work "$work"; return 1; }
   curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
   wait_run "$repo" "$main_sha" || { drop_work "$work"; return 1; }
@@ -2571,17 +2581,28 @@ SH
   [ -n "$url" ] || { log "$queue is not in floci after the apply"; drop_work "$work"; return 1; }
   sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null
   # The drift workflow, once, as its schedule would run it.
-  run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' "$URL/api/v1/repos/$repo/actions/workflows/terragucci.yml/dispatches" | jq -r '.id // empty' 2>/dev/null || true)"
+  run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' "$URL/api/v1/repos/$repo/actions/workflows/terragucci-drift.yml/dispatches" | jq -r '.id // empty' 2>/dev/null || true)"
   [ -n "$run" ] || { log "Forgejo did not start the drift workflow"; rc=1; }
   status=""
   if [ $rc = 0 ]; then
     for i in $(seq 1 $(( TIMEOUT / 3 ))); do
       status="$(api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -r --arg r "$run" '[.workflow_runs // [] | .[] | select(.id == ($r | tonumber))] | (.[0].status // "")')"
-      case "$status" in success|failure|cancelled|skipped) break ;; esac
+      case "$status" in success|failure|cancelled|skipped)
+        # Forgejo reports failure as soon as terragucci-drift-found fails, which it does on purpose to keep a run with drift red,
+        # while the agent jobs may still run. The wait goes on until every job has a final status.
+        jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$run/jobs" 2>/dev/null || echo '[]')"
+        [ "$(jq '[.[] | select(.status | IN("success","failure","cancelled","skipped") | not)] | length' <<<"$jobs" 2>/dev/null || echo 1)" = 0 ] && [ "$(jq length <<<"$jobs" 2>/dev/null || echo 0)" -gt 0 ] && break ;;
+      esac
       sleep 3
     done
-    log "the drift run $run ended '${status:-unknown}'"
-    print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci( drift-agent)?:|stand-in drift agent|drift issue' | cut -c1-300 | sed 's/^/[smoke drift-agent]   /' >&2 || true
+    log "the drift run $run ended '${status:-unknown}': $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"${jobs:-[]}" 2>/dev/null)"
+    # A run with drift ends red through terragucci-drift-found alone; the drift job and both agent jobs succeed.
+    [ "$status" = failure ] || { log "the drift run ended '${status:-unknown}', not failure through terragucci-drift-found"; rc=1; }
+    for s in terragucci-drift terragucci-drift-agent terragucci-drift-agent-push; do
+      [ "$(jq -r --arg n "$s" '[.[] | select(.name == $n)][0].status // "missing"' <<<"$jobs")" = success ] || { log "job $s did not succeed"; rc=1; }
+    done
+    [ "$(jq -r '[.[] | select(.status == "failure") | .name] | join(",")' <<<"$jobs")" = terragucci-drift-found ] || { log "the red jobs are not terragucci-drift-found alone"; rc=1; }
+    print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci( drift-agent)?:|chant(-agent)?:|stand-in drift agent|drift issue|state .*, live ' | cut -c1-300 | sed 's/^/[smoke drift-agent]   /' >&2 || true
   fi
   if [ $rc = 0 ]; then
     issue="$(api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -r '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))] | .[0].number // empty')"
@@ -2589,23 +2610,30 @@ SH
   fi
   if [ -n "$(remote_head "$repo" agent-direct)" ]; then log "the agent's step held a forge token and pushed agent-direct itself"; rc=1; fi
   if [ $rc = 0 ]; then
-    pr="$(open_pr "$repo" "terragucci/drift-agent-$issue")"
+    pr="$(open_pr "$repo" "$branch")"
     if [ -z "$pr" ]; then
-      log "no pull request from terragucci/drift-agent-$issue"; rc=1
+      log "no pull request from $branch"; rc=1
     else
-      head="$(remote_head "$repo" "terragucci/drift-agent-$issue")"
+      head="$(remote_head "$repo" "$branch")"
       [ "$(pr_files "$repo" "$pr")" = "app/main.tf" ] || { log "pull request $pr changes $(pr_files "$repo" "$pr"), not app/main.tf"; rc=1; }
-      grep -q 'visibility_timeout_seconds = 45' <<<"$(file_at "$repo" "terragucci/drift-agent-$issue" "$head" app/main.tf)" || { log "pull request $pr does not set the timeout to 45"; rc=1; }
+      grep -q 'visibility_timeout_seconds = 45' <<<"$(file_at "$repo" "$branch" "$head" app/main.tf)" || { log "pull request $pr does not set the timeout to 45"; rc=1; }
       [ "$(api "$URL/api/v1/repos/$repo/git/commits/$head" | jq -r '.parents[0].sha')" = "$main_sha" ] || { log "the agent's commit is not on top of main"; rc=1; }
-      api "$URL/api/v1/repos/$repo/issues/$issue/comments?limit=50" | jq -r '.[].body' | grep -q "^terragucci: the drift agent opened .*/pulls/$pr" \
-        || { log "drift issue $issue does not link pull request $pr"; rc=1; }
+      [ "$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.title')" = "Bring the code in line with the drift terragucci-drift found" ] \
+        || { log "pull request $pr is not the drift agent's: $(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.title')"; rc=1; }
       for i in $(seq 1 $(( TIMEOUT / 3 ))); do
         [ "$(api "$URL/api/v1/repos/$repo/commits/$head/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length')" -ge 1 ] && break
         sleep 3
       done
       [ "$(api "$URL/api/v1/repos/$repo/commits/$head/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length')" -ge 1 ] \
         || { log "pull request $pr was not planned (no terragucci/plan status on ${head:0:8})"; rc=1; }
-      [ $rc = 0 ] && log "drift issue $issue opened, and the drift agent's pull request $pr sets the timeout to 45 and was planned"
+      # chant#5463: the drift issue gets a comment that links the pull request.
+      for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+        api "$URL/api/v1/repos/$repo/issues/$issue/comments" | jq -e --arg p "/pulls/$pr" '[.[] | select((.body // "") | contains($p))] | length > 0' >/dev/null 2>&1 && break
+        sleep 3
+      done
+      api "$URL/api/v1/repos/$repo/issues/$issue/comments" | jq -e --arg p "/pulls/$pr" '[.[] | select((.body // "") | contains($p))] | length > 0' >/dev/null 2>&1 \
+        || { log "drift issue $issue has no comment linking pull request $pr"; rc=1; }
+      [ $rc = 0 ] && log "drift issue $issue opened and links pull request $pr, and the drift agent's pull request $pr sets the timeout to 45 and was planned"
     fi
   fi
   [ "$(remote_head "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }

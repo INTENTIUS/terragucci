@@ -271,6 +271,7 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
   const apply = [
     ...prowPrelude("postsubmit", repo, prow, input.defaultBranch),
     ...install,
+    // No --own-run-jobs here: the forges name the wave jobs of the run their release cut counts, and prow runs every wave in this one pod, with no sibling jobs of the run to name.
     // chant's wave runner, as a forge wave job sets it up: the spec rendered at the commit, the branch it applies on.
     `export CHANT_LOCK_WAIT=10500 CHANT_WAVES_SPEC_COMMAND='["terragucci","waves-spec"]' CHANT_WAVES_SPEC_RUNS=head CHANT_DEFAULT_BRANCH="$GITHUB_REF_NAME"`,
     // Each wave reads the earlier waves' outcomes from this pod's disk, and stands down when one did not apply.

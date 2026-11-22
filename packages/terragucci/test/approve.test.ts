@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { approve, approveGate, describeMigration, describeStored, isGateKeyword, overrideDenial, waitingMigrations, waitingWaves } from "../src/approve";
+import { approve, approveGate, approveRelease, describeMigration, describeStored, isGateKeyword, overrideDenial, waitingMigrations, waitingWaves } from "../src/approve";
 import { keptPath } from "../src/migrate";
 import { approvedPath, parseLedger } from "../src/apply";
 import { init, signerLine } from "../src/init";
@@ -111,6 +111,26 @@ describe("terragucci approve", () => {
     expect((await approve(none, { plan: "jcs1-sha256:aa", log: (l) => void lines.push(l) })).code).toBe(1);
     expect(lines[0]).toMatch(/^not approved: no wave waits for jcs1-sha256:aa: no wave waits for an approval/);
     await expect(approve(two, { plan: "", dryRun: true, log: () => {} })).rejects.toThrow(/--plan takes the digest/);
+  });
+
+  // terragucci#1532: with .chant/pipeline.ts a promote stops first at the stage's gate, op tf-apply, gate <env>.
+  it("approve release <env> approves the pipeline stage gate that waits, then the components' release gate", async () => {
+    const stage = (digest: string, h: number) => ({ ...pending("staging", digest, h), environment: "staging" });
+    const pipeline = { ".chant/pipeline.ts": "export default {};\n" };
+    const waiting = checkout(jsonl(pending("wave-1", "jcs1-sha256:aa", 1), stage("jcs1-sha256:ss", 2)), pipeline);
+    const lines: string[] = [];
+    expect((await approveRelease(waiting, { environment: "staging", actor: "reviewer", dryRun: true, log: (l) => void lines.push(l) })).command).toBe("chant approve tf-apply staging --env staging --actor reviewer");
+    expect(lines[0]).toBe("staging's stage gate waits for an approval of jcs1-sha256:ss");
+    expect((await approveRelease(waiting, { environment: "staging", plan: "jcs1-sha256:ss", dryRun: true, log: () => {} })).command).toBe("chant approve tf-apply staging --env staging --plan jcs1-sha256:ss");
+    // Another environment's stage, an answered stage gate, or a digest the stage does not wait for: the release gate.
+    expect((await approveRelease(waiting, { environment: "prod", dryRun: true, log: () => {} })).command).toBe("chant approve release prod --env prod");
+    expect((await approveRelease(waiting, { environment: "staging", plan: "jcs1-sha256:cs", dryRun: true, log: () => {} })).command).toBe("chant approve release staging --env staging --plan jcs1-sha256:cs");
+    const answered = checkout(jsonl(stage("jcs1-sha256:ss", 2), resolution("staging", "jcs1-sha256:ss", 3)), pipeline);
+    expect((await approveRelease(answered, { environment: "staging", dryRun: true, log: () => {} })).command).toBe("chant approve release staging --env staging");
+    // With no pipeline there is no stage gate, and the ledger is not read.
+    const plain = join(tmp("tg-approve-release-"), "work");
+    git(join(plain, ".."), "init", "-q", "-b", "main", plain);
+    expect((await approveRelease(plain, { environment: "staging", dryRun: true, log: () => {} })).command).toBe("chant approve release staging --env staging");
   });
 });
 
