@@ -356,8 +356,8 @@ claim_init/chainguard_job() {
   #   a plan step runs: tofu init and plan in a root with a terraform_data resource, as 65532
   # The Debian images' jobs on this runner are the other claims', which run the generated pipeline as root. The image must
   # be built from this tree (just images), since the user, the git setting and the bundle are in it.
-  # BREAK: GIT_CONFIG_NOSYSTEM=1 on the job, so git skips the image's system config and refuses the checkout the
-  # runner owns, and the git facts and the plan are missing.
+  # BREAK: the job runs in the Debian image of the same engine, as root, so the uid, the image's user variable and the
+  # owner of the tool directory are not 65532.
   log() { echo "[smoke chainguard-job] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -438,7 +438,7 @@ jobs:
           echo "CG: tofu_version=$(tofu version | head -1)"
 YAML
   sed -i.bak "s#container: IMAGE#container: $cimage#; s#terragucci install tofu LACKING#terragucci install tofu $lacking#" "$wf" && rm -f "$wf.bak"
-  [ -n "${BREAK:-}" ] && sed -i.bak "s#^    env:#    env:\n      GIT_CONFIG_NOSYSTEM: '1'#" "$wf" && rm -f "$wf.bak"
+  if [ -n "${BREAK:-}" ]; then sed -i.bak "s#container: $cimage#container: ${cimage%-chainguard}#" "$wf" && rm -f "$wf.bak"; fi
   fresh_repo cgjob || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   sha="$(push_tree "$tree" "$repo" main "chainguard-job: a container job as 65532")" || return 1
