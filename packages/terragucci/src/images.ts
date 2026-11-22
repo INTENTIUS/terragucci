@@ -35,7 +35,7 @@ export const IMAGE_BASES = ["debian", "chainguard"] as const;
  * once the pin has moved there (test/images.test.ts keeps the two in step), and it is written out here for the
  * same reason as CHANT_PIN in ./comment-allow.
  */
-export const CI_IMAGE_BASE_CHANT_FLOOR = "0.124.113";
+export const CI_IMAGE_BASE_CHANT_FLOOR = "0.124.114";
 
 /**
  * Whether the installed chant takes `base` in productImageStages (it exports CI_IMAGE_BASE_FLOOR). An older chant

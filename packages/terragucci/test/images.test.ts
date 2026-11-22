@@ -131,8 +131,9 @@ describe("images", () => {
       expect(final).toMatch(/^ENV HOME=\/tmp$/m);
       expect(final).toMatch(/^LABEL io\.intentius\.chant\.image\.base="chainguard"$/m);
       const runs = final.split("\n").filter((l) => l.startsWith("RUN "));
-      const apk = runs.findIndex((l) => l.startsWith("RUN apk add --no-cache ") && l.includes(" git "));
+      const apk = runs.findIndex((l) => l.startsWith("RUN apk add --no-cache ") && / git=\S+ /.test(l));
       expect(apk).toBeGreaterThanOrEqual(0);
+      expect(runs[apk]).toMatch(/ ca-certificates=\S+ /);
       expect(runs.indexOf("RUN git config --system --add safe.directory '*'")).toBeGreaterThan(apk);
       expect(final).not.toContain("apt-get");
     });
@@ -151,7 +152,7 @@ describe("images", () => {
     });
 
     it("tells a chant that takes base from one that does not", () => {
-      expect(chantTakesImageBase({ CI_IMAGE_BASE_FLOOR: "0.124.113" })).toBe(true);
+      expect(chantTakesImageBase({ CI_IMAGE_BASE_FLOOR: "0.124.114" })).toBe(true);
       expect(chantTakesImageBase({ CI_IMAGE_FLOOR: "0.124.60" })).toBe(false);
     });
 

@@ -39,7 +39,7 @@ Each release builds and publishes terragucci's four images, one per toolchain, i
 | Runs as | root | user 65532 |
 | Base digest | `CI_BASE_IMAGES` in [chant](/terragucci/concepts/glossary/#chant), moved with terragucci's chant pin | `IMAGE_PINS` in chant, moved with the same pin |
 
-A pipeline's jobs run in the image by digest, so a job gets the Node major of the set it names and a later release can change the Chainguard one. Each image's labels record its base: `org.opencontainers.image.base.name`, `org.opencontainers.image.base.digest` and `io.intentius.chant.image.base`, which is `debian` or `chainguard`. A terragucci release that published only the Debian images has no digest for the other set, and `init` refuses `image.base: chainguard` with that release.
+A pipeline's jobs run in the image by digest, so a job gets the Node major of the set it names and a later release can change the Chainguard one. The Chainguard set's apk packages are installed at versions chant pins, so they move when chant's pins move. Each image's labels record its base: `org.opencontainers.image.base.name`, `org.opencontainers.image.base.digest` and `io.intentius.chant.image.base`, which is `debian` or `chainguard`. A terragucci release that published only the Debian images has no digest for the other set, and `init` refuses `image.base: chainguard` with that release.
 
 ## Ranges
 
