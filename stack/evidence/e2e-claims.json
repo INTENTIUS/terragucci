@@ -71,7 +71,7 @@
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
       "plain": "fail",
       "product": "terragucci",
-      "productCommit": "d88bb0ed0aeba52b77be8d88e1556774c3782ad4",
+      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
       "safeRun": "CLEAN",
       "scenario": "tg-promote"
     },
@@ -89,7 +89,7 @@
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
       "plain": "fail",
       "product": "terragucci",
-      "productCommit": "d88bb0ed0aeba52b77be8d88e1556774c3782ad4",
+      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
       "safeRun": "CLEAN",
       "scenario": "tg-rollback"
     },
@@ -125,7 +125,7 @@
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
       "plain": "fail",
       "product": "terragucci",
-      "productCommit": "d88bb0ed0aeba52b77be8d88e1556774c3782ad4",
+      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
       "safeRun": "CLEAN",
       "scenario": "tg-stage-promote"
     },
@@ -141,9 +141,9 @@
         "version": "1.13.1"
       },
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
-      "plain": "fail",
+      "plain": "pass",
       "product": "terragucci",
-      "productCommit": "d88bb0ed0aeba52b77be8d88e1556774c3782ad4",
+      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
       "safeRun": "CLEAN",
       "scenario": "tg-stage-rollback-request"
     },
@@ -159,9 +159,9 @@
         "version": "1.13.1"
       },
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
-      "plain": "fail",
+      "plain": "pass",
       "product": "terragucci",
-      "productCommit": "d88bb0ed0aeba52b77be8d88e1556774c3782ad4",
+      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
       "safeRun": "CLEAN",
       "scenario": "tg-stage-soak"
     }
