@@ -261,7 +261,8 @@ case "$CMD" in
     mkdir -p "$WORK/tree"
     cp -R "$EXAMPLE/." "$WORK/tree/"
     gitlab_tree "$WORK/tree"
-    sha="$(TG_FIXED_DATE=1 gl_push "$WORK/tree" main "The shop's estate")"
+    # A fresh tree, so the push carries a base commit under it (PUSH_BASE in lib.sh).
+    sha="$(TG_FIXED_DATE=1 PUSH_BASE="The base the first apply reads its gate policy at" gl_push "$WORK/tree" main "The shop's estate")"
     api -o /dev/null -X PUT "$P" --data-urlencode "default_branch=main"
     log "pushed to main at ${sha:0:8}; the pipeline applies every root…"
     wait_pipeline "$sha" push

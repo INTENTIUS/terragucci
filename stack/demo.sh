@@ -3286,7 +3286,8 @@ up_repo() {
     log "pushed the base to $REPO's main at ${sha:0:8}, applied outside its pipeline"
     RUN_URL="(applied outside the pipeline)"
   else
-    sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words)")"
+    # A tree with no commit yet gets a base commit under this one (PUSH_BASE in lib.sh).
+    sha="$(PUSH_BASE="The base the first apply reads its gate policy at" push_tree "$bt" "$REPO" main "The demo's base: $(roots_words)")"
     log "pushed the base to $REPO's main at ${sha:0:8}; the pipeline applies every root…"
     wait_run "$REPO" "$sha"
     if [ "$RUN_STATUS" != success ]; then

@@ -149,7 +149,8 @@ case "$CMD" in
     else
       curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
     fi
-    TG_FIXED_DATE=1 apply_main_tree "The shop's estate, on Terragrunt"
+    # The repo is new, so the push carries a base commit under it (PUSH_BASE in lib.sh).
+    TG_FIXED_DATE=1 PUSH_BASE="The base the first apply reads its gate policy at" apply_main_tree "The shop's estate, on Terragrunt"
     log "ready in $(( $(date +%s) - started ))s"
     cat <<OUT
 
