@@ -16,6 +16,10 @@
 #                              PUSH_NAME and PUSH_EMAIL author and commit it as
 #                              someone else, PUSH_USER and PUSH_TOKEN push it
 #                              as another Forgejo user (stack/demo.sh's author).
+#                              PUSH_BASE=<message>: in a DIR with no commit yet,
+#                              commit the tree with that message first and
+#                              MESSAGE as an empty commit on top, pushed together,
+#                              so the pushed commit has a parent (see push_tree).
 #   wait_run REPO SHA [EVENT]  wait for the Actions run on SHA (the newest one,
 #                              or the one EVENT started; WAIT_WORKFLOW=<file>
 #                              only that workflow's, WAIT_TRIGGER=<event> only
@@ -117,8 +121,15 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     fi
     # Never sign: these are throwaway commits, and an unsigned commit has the
     # same sha on every machine, which the tutorial's captures rely on.
-    git -c user.email="${PUSH_EMAIL:-example@terragucci.local}" -c user.name="${PUSH_NAME:-terragucci}" -c commit.gpgsign=false \
-      commit -q --allow-empty -m "$message"
+    local who_c=(-c user.email="${PUSH_EMAIL:-example@terragucci.local}" -c user.name="${PUSH_NAME:-terragucci}" -c commit.gpgsign=false)
+    # A pipeline's apply reads its gate policy at the commit before the one it
+    # applies (chant's HEAD^1), which a repo's first commit does not have
+    # (#1541, chant#5488). PUSH_BASE commits the same tree under it, and one
+    # push carries both, so the forge starts one run, on MESSAGE's commit.
+    if [ -n "${PUSH_BASE:-}" ] && ! git rev-parse -q --verify HEAD >/dev/null; then
+      git "${who_c[@]}" commit -q -m "$PUSH_BASE"
+    fi
+    git "${who_c[@]}" commit -q --allow-empty -m "$message"
     local who="${PUSH_USER:-$USER}" secret="${PUSH_TOKEN:-$TOKEN}"
     local remote="${URL/#http:\/\//http://${who}:${secret}@}/${repo}.git"
     # Forgejo's "create a pull request" hint is noise; show output only on failure.

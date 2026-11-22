@@ -211,7 +211,8 @@ PY
       curl -fsS -o /dev/null -X PUT "$FLOCI/$EX_SHOP-terraform-state"
     fi
     # The sha depends only on the example's contents, so a capture can rely on it.
-    TG_FIXED_DATE=1 apply_main_tree "The shop's estate"
+    # The repo is new, so the push carries a base commit under it (PUSH_BASE in lib.sh).
+    TG_FIXED_DATE=1 PUSH_BASE="The base the first apply reads its gate policy at" apply_main_tree "The shop's estate"
     log "ready in $(( $(date +%s) - started ))s"
     if [ -n "$FOUNTAIN" ]; then
       turn="$("$HERE/steward.sh" turns | tail -1)"
