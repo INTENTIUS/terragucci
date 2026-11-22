@@ -493,7 +493,9 @@ export async function main(argv: string[]): Promise<number> {
   try {
     // `action --json` prints the action's own object (action.ts ActionJson), which behold and scripts read.
     // `run wave --json` is chant's own: it prints the wave's result, as `promote` and `rollback` print chant's plan and run.
-    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action" && cmd !== "run" && cmd !== "promote" && cmd !== "rollback") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
+    // `release` and `pipeline` are chant's too: the release cut compiles each environment as `<release.bin> release compile --json` (chant#5474).
+    const chantJson = ["action", "run", "promote", "rollback", "release", "pipeline"];
+    if (json && !ENVELOPE_COMMANDS.includes(cmd) && !chantJson.includes(cmd)) throw new ConfigError(`--json is not available on ${cmd || "help"}`);
     switch (cmd) {
       case "init": {
         const forge = str(flags, "forge");
