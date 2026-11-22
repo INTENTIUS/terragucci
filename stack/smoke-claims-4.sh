@@ -2525,7 +2525,7 @@ claim_agent/drift() {
   log() { echo "[smoke drift-agent] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/drift-agent" queue="tg-drift-agent-$STAMP" key="respond/drift-agent-$STAMP.tfstate" url main_sha run status issue pr head i rc=0 wf s branch=terragucci/agent/terragucci-drift
+  local work repo="$USER/drift-agent" queue="tg-drift-agent-$STAMP" key="respond/drift-agent-$STAMP.tfstate" url main_sha run status jobs issue pr head i rc=0 wf s branch=terragucci/agent/terragucci-drift
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo drift-agent || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true,"has_issues":true}' "$URL/api/v1/repos/$repo"
@@ -2587,10 +2587,21 @@ SH
   if [ $rc = 0 ]; then
     for i in $(seq 1 $(( TIMEOUT / 3 ))); do
       status="$(api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -r --arg r "$run" '[.workflow_runs // [] | .[] | select(.id == ($r | tonumber))] | (.[0].status // "")')"
-      case "$status" in success|failure|cancelled|skipped) break ;; esac
+      case "$status" in success|failure|cancelled|skipped)
+        # Forgejo reports failure as soon as terragucci-drift-found fails, which it does on purpose to keep a run with drift red,
+        # while the agent jobs may still run. The wait goes on until every job has a final status.
+        jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$run/jobs" 2>/dev/null || echo '[]')"
+        [ "$(jq '[.[] | select(.status | IN("success","failure","cancelled","skipped") | not)] | length' <<<"$jobs" 2>/dev/null || echo 1)" = 0 ] && [ "$(jq length <<<"$jobs" 2>/dev/null || echo 0)" -gt 0 ] && break ;;
+      esac
       sleep 3
     done
-    log "the drift run $run ended '${status:-unknown}'"
+    log "the drift run $run ended '${status:-unknown}': $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"${jobs:-[]}" 2>/dev/null)"
+    # A run with drift ends red through terragucci-drift-found alone; the drift job and both agent jobs succeed.
+    [ "$status" = failure ] || { log "the drift run ended '${status:-unknown}', not failure through terragucci-drift-found"; rc=1; }
+    for s in terragucci-drift terragucci-drift-agent terragucci-drift-agent-push; do
+      [ "$(jq -r --arg n "$s" '[.[] | select(.name == $n)][0].status // "missing"' <<<"$jobs")" = success ] || { log "job $s did not succeed"; rc=1; }
+    done
+    [ "$(jq -r '[.[] | select(.status == "failure") | .name] | join(",")' <<<"$jobs")" = terragucci-drift-found ] || { log "the red jobs are not terragucci-drift-found alone"; rc=1; }
     print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci( drift-agent)?:|chant(-agent)?:|stand-in drift agent|drift issue|state .*, live ' | cut -c1-300 | sed 's/^/[smoke drift-agent]   /' >&2 || true
   fi
   if [ $rc = 0 ]; then
@@ -2615,7 +2626,14 @@ SH
       done
       [ "$(api "$URL/api/v1/repos/$repo/commits/$head/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length')" -ge 1 ] \
         || { log "pull request $pr was not planned (no terragucci/plan status on ${head:0:8})"; rc=1; }
-      [ $rc = 0 ] && log "drift issue $issue opened, and the drift agent's pull request $pr sets the timeout to 45 and was planned"
+      # chant#5463: the drift issue gets a comment that links the pull request.
+      for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+        api "$URL/api/v1/repos/$repo/issues/$issue/comments" | jq -e --arg p "/pulls/$pr" '[.[] | select((.body // "") | contains($p))] | length > 0' >/dev/null 2>&1 && break
+        sleep 3
+      done
+      api "$URL/api/v1/repos/$repo/issues/$issue/comments" | jq -e --arg p "/pulls/$pr" '[.[] | select((.body // "") | contains($p))] | length > 0' >/dev/null 2>&1 \
+        || { log "drift issue $issue has no comment linking pull request $pr"; rc=1; }
+      [ $rc = 0 ] && log "drift issue $issue opened and links pull request $pr, and the drift agent's pull request $pr sets the timeout to 45 and was planned"
     fi
   fi
   [ "$(remote_head "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }
