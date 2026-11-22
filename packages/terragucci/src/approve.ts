@@ -54,7 +54,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { LEDGER_READ_REF, readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
+import { APPLY_OP, LEDGER_READ_REF, readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
+import { PIPELINE_FILE } from "@intentius/chant/pipeline";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
 import { declaredHardMandatory } from "./report/policy";
 import { checkoutApproval } from "./approval";
@@ -470,13 +471,35 @@ export async function approveGate(repo: string, o: GateApproveOptions): Promise<
 }
 
 /**
- * `terragucci approve release <env> [--plan <digest>]`: approve the release
- * gate a `terragucci promote` or `rollback` stopped at (./promotion.ts). Each
- * component of the environment waits at a gate named after it, and chant's
- * release gate binds that gate to the release, the environment and the change
- * set the promote planned: `chant approve release <env> --env <env>`. With
- * `--plan` it approves that digest only. Run the same promote or rollback
- * again afterwards.
+ * The pipeline stage gate of `environment` that waits (chant#5324): with
+ * `.chant/pipeline.ts`, a promote into a stage stops first at the stage's
+ * gate, recorded under op `tf-apply` with the stage's name as the gate, and
+ * prints `terragucci approve release <env>` for it (terragucci#1532). The
+ * newest pending fact of that gate in that environment, when no approval of
+ * its digest at or after it answers it, or with `plan` the fact of that
+ * digest. Undefined when the repo has no pipeline or the gate stands open.
+ */
+export function waitingStageGate(ledger: GateLedger, environment: string, plan?: string): { digest: string } | undefined {
+  const facts = ledger.pending
+    .filter((p) => p.gate === environment && p.planDigest && (p.environment === undefined || p.environment === environment))
+    .sort((a, b) => at(b.timestamp) - at(a.timestamp));
+  const newest = plan !== undefined ? facts.find((p) => samePlanDigest(p.planDigest, plan)) : facts[0];
+  if (!newest) return undefined;
+  const answered = ledger.resolutions.some((r) => r.gate === environment && samePlanDigest(r.planDigest, newest.planDigest) && at(r.timestamp) >= at(newest.timestamp));
+  return answered ? undefined : { digest: newest.planDigest! };
+}
+
+/**
+ * `terragucci approve release <env> [--plan <digest>]`: approve the gate a
+ * `terragucci promote` or `rollback` stopped at (./promotion.ts). With
+ * `.chant/pipeline.ts`, a promote stops first at the environment's stage
+ * gate, and while that gate waits this approves it: `chant approve tf-apply
+ * <env> --env <env>`. Otherwise it approves the components' release gate:
+ * each component of the environment waits at a gate named after it, and
+ * chant's release gate binds that gate to the release, the environment and
+ * the change set the promote planned: `chant approve release <env> --env
+ * <env>`. With `--plan` it approves that digest only. Run the same promote
+ * or rollback again afterwards.
  */
 export async function approveRelease(repo: string, o: Omit<ApproveOptions, "wave" | "resume" | "fetch"> & { environment: string }): Promise<{ code: number; command: string }> {
   const log = o.log ?? ((l: string) => console.log(l));
@@ -486,13 +509,16 @@ export async function approveRelease(repo: string, o: Omit<ApproveOptions, "wave
   const configPath = findConfig(repo);
   const mode: Approval = checkoutApproval(repo, configPath ? await loadConfig(configPath) : {})?.mode ?? "ledger";
   const sign = o.sign ?? (mode === "sealed" ? true : undefined);
-  const args = ["approve", "release", o.environment, "--env", o.environment, ...(plan ? ["--plan", plan] : []), ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
+  const stage = existsSync(join(repo, PIPELINE_FILE)) ? waitingStageGate(readLedger(repo), o.environment, plan) : undefined;
+  const op = stage ? APPLY_OP : "release";
+  const args = ["approve", op, o.environment, "--env", o.environment, ...(plan ? ["--plan", plan] : []), ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
   const command = `chant ${args.map(quote).join(" ")}`;
+  if (stage) log(`${o.environment}'s stage gate waits for an approval of ${stage.digest}`);
   if (o.dryRun) {
     log(`would run: ${command}`);
     return { code: 0, command };
   }
   const code = runChant(repo, args, command, o, log);
-  if (code === 0) log(`approved the release gate of ${o.environment}; run the same terragucci promote or rollback again`);
+  if (code === 0) log(`approved the ${stage ? "stage" : "release"} gate of ${o.environment}; run the same terragucci promote or rollback again`);
   return { code, command };
 }

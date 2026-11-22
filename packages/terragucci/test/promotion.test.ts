@@ -323,4 +323,64 @@ describe.skipIf(!hasTofu || !existsSync(DIST))("a release through dev and stagin
     expect(value("staging")).toBe("net-staging-v1");
     expect(value("dev")).toBe("net-dev-v2");
   }, 300_000);
+
+  // terragucci#1532: with .chant/pipeline.ts, `terragucci approve release <env>` answers the stage's gate the promote stops at.
+  it("with the pipeline terragucci ci writes, approve release answers the gate staging waits at", () => {
+    const repo = tmp("terragucci-promote-pipeline-");
+    const origin = tmp("terragucci-promote-pipeline-origin-");
+    const env = { ...process.env, CHANT_ACTOR: "tester", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", NO_COLOR: "1" };
+    const run = (bin: string, ...args: string[]) => {
+      const r = spawnSync(bin === "chant" ? CHANT : process.execPath, bin === "chant" ? args : [DIST, ...args], { cwd: repo, encoding: "utf-8", env });
+      return { code: r.status, out: `${r.stdout}${r.stderr}` };
+    };
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
+    write(repo, {
+      "terragucci.yml": "forge: github\nbinary: tofu\nenvironments:\n  dev: { roots: [\"envs/dev/**\"], gate: never }\n  staging: { roots: [\"envs/staging/**\"], gate: always }\n  prod: { roots: [\"envs/prod/**\"], gate: always }\npromotion: [dev, staging, prod]\nrelease:\n  cut: false\n",
+      // Each root keeps its state at a path of its own, beside the test above's.
+      "envs/dev/net/main.tf": root("dev", "v1").replace("/dev", "/pdev"),
+      "envs/staging/net/main.tf": root("staging", "v1").replace("/staging", "/pstaging"),
+      "envs/prod/net/main.tf": root("prod", "v1").replace("/prod", "/pprod"),
+      ".gitignore": ".terraform/\n.terraform.lock.hcl\n*.tfplan\nchant.tfplan*\n.chant/release-templates/\n.chant/promote/\n",
+    });
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "config", "user.name", "t");
+    git(repo, "config", "user.email", "t@t");
+    const init = run("node", "init", "--no-bucket-check");
+    expect(init.code, init.out).toBe(0);
+    const ci = run("node", "ci");
+    expect(ci.code, ci.out).toBe(0);
+    expect(existsSync(join(repo, ".chant/pipeline.ts"))).toBe(true);
+    const configFile = join(repo, "chant.config.ts");
+    writeFileSync(configFile, readFileSync(configFile, "utf-8").replace('"green": "forge-checks"', '"green": "chant"'));
+    git(repo, "add", "-A");
+    git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init");
+    git(repo, "push", "-q", "origin", "main");
+    git(repo, "tag", `ci/green/${git(repo, "rev-parse", "HEAD").trim()}`);
+    const cut = run("chant", "release", "cut", "r1", "--yes");
+    expect(cut.code, cut.out).toBe(0);
+    git(repo, "push", "-q", "origin", "release/r1");
+    const dev = run("chant", "run", "--components", "all", "--env", "dev", "--release", "r1");
+    expect(dev.code, dev.out).toBe(0);
+
+    // The promote stops first at the stage's gate, tf-apply staging, and names approve release for it.
+    const waiting = run("node", "promote", "--to", "staging", "--release", "r1");
+    expect(waiting.code, waiting.out).toBe(3);
+    expect(waiting.out).toContain("tf-apply staging waits for an approval of");
+    expect(waiting.out).toContain("terragucci approve release staging");
+    const stage = run("node", "approve", "release", "staging");
+    expect(stage.code, stage.out).toBe(0);
+    expect(stage.out).toContain("running: chant approve tf-apply staging --env staging");
+    // Past the stage's gate, the components' release gate binds the change set the promote planned.
+    const planned = run("node", "promote", "--to", "staging", "--release", "r1");
+    expect(planned.code, planned.out).toBe(3);
+    expect(planned.out).toContain("stage staging: tf-apply staging approved by");
+    expect(value("pstaging")).toBeUndefined();
+    const release = run("node", "approve", "release", "staging");
+    expect(release.code, release.out).toBe(0);
+    expect(release.out).toContain("running: chant approve release staging --env staging");
+    const promoted = run("node", "promote", "--to", "staging", "--release", "r1");
+    expect(promoted.code, promoted.out).toBe(0);
+    expect(value("pstaging")).toBe("net-staging-v1");
+  }, 300_000);
 });
