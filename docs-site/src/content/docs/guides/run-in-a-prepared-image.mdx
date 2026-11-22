@@ -15,6 +15,22 @@ By default each job downloads the providers its roots need, into the job's provi
 
 terragucci writes the files for the image. You build and push it in your own CI, to your own registry; terragucci builds and hosts nothing.
 
+## The two image sets
+
+`image.base` in `terragucci.yml` picks which of terragucci's two image sets the recipe builds `FROM`. Debian is the default.
+
+| `image.base` | `FROM` the recipe writes | Final user | Node |
+|---|---|---|---|
+| `debian` | `ghcr.io/intentius/terragucci-<binary>:<tag>@<digest>` | root | 22 |
+| `chainguard` | `ghcr.io/intentius/terragucci-<binary>:<tag>-chainguard@<digest>` | 65532 | the one Wolfi packages (26 when the set was built) |
+
+```yaml
+image:
+  base: chainguard
+```
+
+The recipe's steps run as root on either base, and its Dockerfile then sets the user back to the base image's (`USER ${CHANT_IMAGE_USER:-root}`). A layer you add yourself runs as that user, so on the Chainguard base wrap it in `USER root` and `USER 65532` lines. Keep `base` when you add the pushed image's `name`.
+
 ## Before you start
 
 | You need | Why |
@@ -37,7 +53,7 @@ terragucci writes the files for the image. You build and push it in your own CI,
 
    | File | Holds |
    |---|---|
-   | `image/Dockerfile` | `FROM` the terragucci image the pipeline names for your binary, then `providers mirror` into `/usr/share/terragucci/providers`, and `TF_CLI_CONFIG_FILE` pointing at the CLI config |
+   | `image/Dockerfile` | `FROM` the terragucci image the pipeline names for your binary in the set `image.base` picks, then `providers mirror` into `/usr/share/terragucci/providers`, and `TF_CLI_CONFIG_FILE` pointing at the CLI config |
    | `image/terragucci.tfrc` | a CLI config whose only installation method is a `filesystem_mirror` at that directory |
    | `image/mirror/NN/` | one small module per distinct lock file: a `versions.tf` that requires each provider at exactly its locked version, and the lock file itself, so each download is checked against its hashes |
    | `image/build.sh` | the `docker buildx build --push` line, for the platforms you asked for |
@@ -80,7 +96,7 @@ To clear it, run `npx terragucci image recipe` again, rebuild and push the image
 
 ## Your organization's layers
 
-Add these to the generated Dockerfile after the `FROM` line. The images are Debian.
+Add these to the generated Dockerfile before its final `USER` line, or after it with `USER root` first. The commands are the Debian ones. The Chainguard base has no apt: its packages come from apk (`apk add --no-cache <name>`), and a layer that changes the system runs as root, with `USER 65532` after it.
 
 | For | Add |
 |---|---|

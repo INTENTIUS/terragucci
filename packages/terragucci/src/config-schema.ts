@@ -574,9 +574,9 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
     image: {
       anyOf: [
         { type: "string", pattern: "^[^\\s]+$" },
-        { ...map(IMAGE_KEYS, { name: { type: "string", pattern: "^[^\\s]+$" }, mirror: { anyOf: [{ const: true }, { type: "string", pattern: "^/" }] } }), required: ["name"] },
+        { ...map(IMAGE_KEYS, { name: { type: "string", pattern: "^[^\\s]+$" }, mirror: { anyOf: [{ const: true }, { type: "string", pattern: "^/" }] }, base: { enum: ["debian", "chainguard"] } }), anyOf: [{ required: ["name"] }, { required: ["base"] }] },
       ],
-      description: "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries.",
+      description: "The image every job runs in, built FROM terragucci's; as a map, its name, the provider mirror it carries and base, the set of terragucci's images (debian or chainguard).",
     },
     notify: {
       ...map([...NOTIFY_KEYS, "relay_name"], {

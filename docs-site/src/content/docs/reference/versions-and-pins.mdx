@@ -9,7 +9,7 @@ Every version a job runs is pinned in the repo and moved by a reviewed pull requ
 | What | The pin lives in | Moved by | Checked before it runs | Tip for a missing pin |
 |---|---|---|---|---|
 | terragucci | `@intentius/terragucci` in `package.json`, and the image tag in the pipeline, which carries the package version | `init` at the new version, in a pull request ([Upgrade terragucci](/terragucci/guides/upgrade-terragucci/)) | the image is pulled by its digest | |
-| the job image | the pipeline: `ghcr.io/intentius/terragucci-<binary>:<tag>@<digest>`, or the image [`image`](/terragucci/reference/config/#keys) names | `init` | its digest; the pipeline's header says when it is pinned by digest | |
+| the job image | the pipeline: `ghcr.io/intentius/terragucci-<binary>:<tag>@<digest>` for the Debian set, `ghcr.io/intentius/terragucci-<binary>:<tag>-chainguard@<digest>` for the Chainguard set that `image.base: chainguard` picks, or the image [`image`](/terragucci/reference/config/#keys) names | `init` | its digest; the pipeline's header says when it is pinned by digest | |
 | OpenTofu or Terraform, per root | the first of: `version` as a map of root globs, the root's `.opentofu-version` or `.terraform-version`, an exact `required_version` | a pull request by hand | a release the image does not carry is installed against the release's SHA256SUMS | `TF003`, no `required_version` |
 | [choudoufu](/terragucci/concepts/glossary/#choudoufu) | `version`, one release for every root; a map is refused | a pull request by hand | SHA256SUMS | |
 | Terragrunt | `terragrunt.version`, or an exact `terragrunt_version_constraint` in a unit's own `terragrunt.hcl` | a pull request by hand | SHA256SUMS | |
@@ -25,6 +25,21 @@ Every version a job runs is pinned in the repo and moved by a reviewed pull requ
 [Tips](/terragucci/reference/tips/) has each rule, and [Supply chain](/terragucci/standards/supply-chain/) what proves where each piece comes from.
 
 Each applied wave records the binary, provider and module versions its roots ran in the project's `versions.json`. The estate page lists them per module, provider and binary with the roots on each version ([Versions](/terragucci/guides/see-every-project/#versions)), and `terragucci query` reads them as its `versions` table.
+
+## The two image sets
+
+Each release builds and publishes terragucci's four images, one per toolchain, in two sets, and records the digest of all eight in the package. `image.base` in `terragucci.yml` picks the set, and `init` names that set's image by its digest. Both sets carry the same engines at the same versions, chant's wave runtime and the terragucci bundle.
+
+| | Debian (default) | Chainguard |
+|---|---|---|
+| Tag | `<version>-<binary><engine version>` | the same, ending in `-chainguard` |
+| Base | `node:22-bookworm-slim`, by digest | `cgr.dev/chainguard/node:latest-dev`, by digest, with `cgr.dev/chainguard/wolfi-base` for the download stage |
+| Node | 22 | the Node Wolfi packages: 26 when the set was built, so it moves to a newer major without a change here |
+| Packages | apt | apk |
+| Runs as | root | user 65532 |
+| Base digest | `CI_BASE_IMAGES` in [chant](/terragucci/concepts/glossary/#chant), moved with terragucci's chant pin | `IMAGE_PINS` in chant, moved with the same pin |
+
+A pipeline's jobs run in the image by digest, so a job gets the Node major of the set it names and a later release can change the Chainguard one. Each image's labels record its base: `org.opencontainers.image.base.name`, `org.opencontainers.image.base.digest` and `io.intentius.chant.image.base`, which is `debian` or `chainguard`. A terragucci release that published only the Debian images has no digest for the other set, and `init` refuses `image.base: chainguard` with that release.
 
 ## Ranges
 

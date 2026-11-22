@@ -519,18 +519,24 @@ export interface AgentCommentSettings {
 }
 
 /**
- * `image` as a map: the image every job runs in, and whether it is a prepared
- * image carrying a provider mirror (`terragucci image recipe` writes one).
- * With `mirror` set, tf-check checks the mirror covers every lock file.
+ * `image` as a map: the base of terragucci's own images, the image every job
+ * runs in, and whether it is a prepared image carrying a provider mirror
+ * (`terragucci image recipe` writes one). With `mirror` set, tf-check checks
+ * the mirror covers every lock file.
  */
 export interface ImageSettings {
-  /** The image reference, built FROM the terragucci image for the binary. */
-  name: string;
-  /** The provider mirror's directory in the image; `true` is the one the recipe writes (MIRROR_DIR). */
+  /** The image reference, built FROM the terragucci image for the binary. Without it the jobs run in terragucci's own image. */
+  name?: string;
+  /** The provider mirror's directory in the image; `true` is the one the recipe writes (MIRROR_DIR). Needs `name`. */
   mirror?: string | true;
+  /** The set of terragucci's images the jobs run in, and the recipe builds FROM: `debian` (the default) or `chainguard`. */
+  base?: "debian" | "chainguard";
 }
 
-export const IMAGE_KEYS = ["name", "mirror"] as const;
+export const IMAGE_KEYS = ["name", "mirror", "base"] as const;
+
+/** The values `image.base` takes. */
+export const IMAGE_BASE_VALUES = ["debian", "chainguard"] as const;
 
 /**
  * `control`: after a member repo's apply on the default branch succeeds, its pipeline sends a dispatch to the
@@ -825,20 +831,29 @@ export function imageName(image: string | ImageSettings | undefined): string | u
   return typeof image === "string" ? image : image?.name;
 }
 
+/** The set of terragucci's images `image` picks: `debian` unless it says `base: chainguard`. */
+export function imageBase(image: string | ImageSettings | undefined): "debian" | "chainguard" {
+  return typeof image === "object" && image !== null && image.base === "chainguard" ? "chainguard" : "debian";
+}
+
 /** The provider mirror's directory in the image `image` names, when it carries one. */
 export function imageMirror(image: string | ImageSettings | undefined): string | undefined {
   if (typeof image !== "object" || image === null || image.mirror === undefined) return undefined;
   return image.mirror === true ? MIRROR_DIR : image.mirror;
 }
 
-/** The problems with `image`: a reference, or a map of `name` and `mirror`. */
+/** The problems with `image`: a reference, or a map of `name`, `mirror` and `base`. */
 export function imageProblems(v: unknown, where: string): string[] {
   const refProblem = `must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`;
   if (typeof v === "string") return IMAGE_REF.test(v) ? [] : [`${where} ${refProblem}`];
   if (!isObject(v)) return [`${where} must be an image reference, or a map (settings: ${IMAGE_KEYS.join(", ")})`];
   const out: string[] = [];
   for (const k of Object.keys(v)) if (!(IMAGE_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${IMAGE_KEYS.join(", ")})`);
-  if (!(typeof v.name === "string" && IMAGE_REF.test(v.name))) out.push(`${where}.name ${refProblem}`);
+  if (v.name === undefined) {
+    if (v.base === undefined) out.push(`${where} as a map needs name (the image to run in) or base (${IMAGE_BASE_VALUES.join(" or ")})`);
+    if (v.mirror !== undefined) out.push(`${where}.mirror needs ${where}.name: the mirror is in the image you built and pushed, which name gives`);
+  } else if (!(typeof v.name === "string" && IMAGE_REF.test(v.name))) out.push(`${where}.name ${refProblem}`);
+  if (v.base !== undefined && !(IMAGE_BASE_VALUES as readonly unknown[]).includes(v.base)) out.push(`${where}.base must be ${IMAGE_BASE_VALUES.join(" or ")}`);
   if (v.mirror !== undefined && v.mirror !== true && !(typeof v.mirror === "string" && v.mirror.startsWith("/"))) {
     out.push(`${where}.mirror must be true (the recipe's ${MIRROR_DIR}) or the mirror's absolute directory in the image`);
   }
@@ -969,7 +984,9 @@ export interface ProjectSettings {
    * The image every job runs in, in place of terragucci's: one built FROM
    * the terragucci image for the binary, so the job still has terragucci and
    * the binary, plus what the `ci.hooks` need. A map names it under `name`
-   * and says, with `mirror`, that it carries a provider mirror (ImageSettings).
+   * and says, with `mirror`, that it carries a provider mirror, and picks
+   * with `base` which of terragucci's two image sets the jobs run in or the
+   * recipe builds FROM (ImageSettings).
    */
   image?: string | ImageSettings;
   /**

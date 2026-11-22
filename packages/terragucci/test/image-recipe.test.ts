@@ -1,7 +1,7 @@
 // Prepared images: the recipe's files and tf-check's mirror step, on small fixtures. Nothing is built or pulled.
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { imageMirror, imageName, imageProblems, MIRROR_DIR } from "../src/config";
+import { imageBase, imageMirror, imageName, imageProblems, MIRROR_DIR } from "../src/config";
 import { checkMirror, hostPlatform, lockFiles, mirrorHas, planRecipe } from "../src/image-recipe";
 import { checkScript } from "../src/render";
 import { terragruntCheckScript } from "../src/render-terragrunt";
@@ -41,7 +41,8 @@ describe("image config", () => {
     expect(imageProblems("registry.example.com/infra/tg:1", "config.image")).toEqual([]);
     expect(imageProblems({ name: "registry.example.com/infra/tg:1", mirror: true }, "config.image")).toEqual([]);
     expect(imageProblems({ name: "r/x:1", mirror: "/opt/providers" }, "config.image")).toEqual([]);
-    expect(imageProblems({ mirror: true }, "config.image")[0]).toMatch(/config\.image\.name must be an image reference/);
+    expect(imageProblems({ mirror: true }, "config.image")[0]).toMatch(/config\.image as a map needs name .* or base/);
+    expect(imageProblems({ name: "", mirror: true }, "config.image")[0]).toMatch(/config\.image\.name must be an image reference/);
     expect(imageProblems({ name: "r/x:1", mirror: "relative" }, "config.image")[0]).toMatch(/mirror must be true/);
     expect(imageProblems({ name: "r/x:1", labels: 1 }, "config.image")[0]).toMatch(/labels is not a setting/);
     expect(imageName({ name: "r/x:1", mirror: true })).toBe("r/x:1");
@@ -49,6 +50,21 @@ describe("image config", () => {
     expect(imageMirror("r/x:1")).toBeUndefined();
     expect(imageMirror({ name: "r/x:1" })).toBeUndefined();
     expect(imageMirror({ name: "r/x:1", mirror: true })).toBe(MIRROR_DIR);
+  });
+});
+
+describe("image.base", () => {
+  it("picks one of the two sets, debian by default, with or without a name", () => {
+    expect(imageProblems({ base: "chainguard" }, "config.image")).toEqual([]);
+    expect(imageProblems({ base: "debian" }, "config.image")).toEqual([]);
+    expect(imageProblems({ name: "r/x:1", base: "chainguard", mirror: true }, "config.image")).toEqual([]);
+    expect(imageProblems({ base: "alpine" }, "config.image")[0]).toMatch(/config\.image\.base must be debian or chainguard/);
+    expect(imageProblems({ mirror: true, base: "chainguard" }, "config.image")[0]).toMatch(/mirror needs config\.image\.name/);
+    expect(imageBase(undefined)).toBe("debian");
+    expect(imageBase("r/x:1")).toBe("debian");
+    expect(imageBase({ name: "r/x:1" })).toBe("debian");
+    expect(imageBase({ base: "chainguard" })).toBe("chainguard");
+    expect(imageName({ base: "chainguard" })).toBeUndefined();
   });
 });
 
@@ -83,6 +99,23 @@ describe("image recipe", () => {
     const tg = planRecipe(repo(), { binary: "terraform", terragrunt: true });
     expect(tg.from).toMatch(/terragucci-terragrunt:/);
     expect(tg.files.find((f) => f.path === "Dockerfile")!.content).toContain('tofu -chdir="$d" providers mirror');
+  });
+
+  it("builds FROM the Chainguard image for image.base: chainguard, as root, and ends as the image's own user", () => {
+    const r = planRecipe(repo(), { binary: "tofu", base: "chainguard" });
+    expect(r.from).toMatch(/^ghcr\.io\/intentius\/terragucci-tofu:[^@]+-tofu1\.\d+\.\d+-chainguard$/);
+    const docker = r.files.find((f) => f.path === "Dockerfile")!.content;
+    const lines = docker.split("\n").filter((l) => !l.startsWith("#") && l !== "");
+    // The mirror's steps run as root on either set, and the image ends as the base's user: chant's helper, or the recipe itself on an older chant.
+    expect(lines[0]).toBe(`FROM ${r.from}`);
+    expect(lines[1]).toBe("USER root");
+    expect(lines.at(-1)).toMatch(/^USER (\$\{CHANT_IMAGE_USER:-root\}|65532)$/);
+    expect(lines.filter((l) => l.startsWith("USER ")).length).toBe(2);
+    const tg = planRecipe(repo(), { binary: "terraform", terragrunt: true, base: "chainguard" });
+    expect(tg.from).toMatch(/terragucci-terragrunt:.*-chainguard$/);
+    // The Debian set keeps the user it has, and --from is taken as it is.
+    expect(planRecipe(repo(), { binary: "tofu" }).from).not.toMatch(/-chainguard/);
+    expect(planRecipe(repo(), { from: "x:1", base: "chainguard" }).from).toBe("x:1");
   });
 
   it("writes an empty mirror for a repo with no lock file, and refuses a platform that is not os/arch", () => {

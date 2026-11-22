@@ -32,6 +32,7 @@ import {
   ownJobsProblems,
   loadConfig,
   BUILT_IN,
+  imageBase,
   imageMirror,
   imageName,
   PROJECT_FILE_KEYS,
@@ -52,7 +53,7 @@ import { bucketLines, estateOf, liveRoots, setupLine, writtenRecordStore } from 
 import { checkStoreBucket, readLiveSetup } from "./live-setup";
 import type { PolicyExec } from "./report/policy";
 import { BINARY, detectShape, refuseProblems } from "./shape";
-import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
+import { carriesBase, imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
@@ -113,6 +114,8 @@ export interface InitOptions {
   bucketCheck?: boolean;
   /** The environment the bucket check takes its region, endpoint and keys from. Default: the process's. */
   env?: NodeJS.ProcessEnv;
+  /** The digests of terragucci's images, keyed by `<repository>:<tag>`. Default: the table this release's build carries, which a checkout has none of. */
+  imageDigests?: Record<string, string>;
 }
 
 /** A live root's record store and estate, as choudoufu resolved them, and what chant's bucket check found. */
@@ -347,10 +350,17 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
 
   let ref: ImageRef;
   let tgInput: PipelineInput["terragrunt"];
+  // image.base picks the set of terragucci's own images. An image named under image.name is the repo's own, built from
+  // whichever set it chose, so only the jobs that run in terragucci's image need this release to have published the set.
+  const imageSet = imageBase(settings.image);
+  const imageTable = options.imageDigests;
+  if (imageName(settings.image) === undefined && !carriesBase(imageSet, imageTable)) {
+    throw new ConfigError(`image.base: ${imageSet} names an image set this terragucci release did not publish; upgrade terragucci to a release that publishes the ${imageSet} images, or remove image.base`);
+  }
   if (terragrunt) {
     // Terragrunt calls the binary through TG_TF_PATH. tofu and terraform run in the Terragrunt image; choudoufu runs in its own
     // image, which carries no Terragrunt, so the jobs install the Terragrunt release beside it.
-    ref = binary.value === "choudoufu" ? imageFor("choudoufu") : terragruntImage();
+    ref = binary.value === "choudoufu" ? imageFor("choudoufu", imageTable, imageSet) : terragruntImage(imageTable, imageSet);
     tgInput = {
       version: terragrunt.version.value,
       parallelism: terragrunt.parallelism.value,
@@ -365,7 +375,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
     };
   } else {
-    ref = imageFor(binary.value);
+    ref = imageFor(binary.value, imageTable, imageSet);
   }
   // One apply job per identity (./cloud-identity.ts), for plain roots: environments, or roles by glob that tell roots apart.
   const groups = tgInput ? undefined : applyGroups(settings, layers.flat());
@@ -438,7 +448,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     version: version.value,
     // image: the repo's own, built FROM terragucci's, so the jobs still carry terragucci and the binary.
     image: imageName(settings.image) ?? imageReference(ref),
-    ...(settings.image ? { imageFromConfig: true } : {}),
+    ...(imageName(settings.image) !== undefined ? { imageFromConfig: true } : {}),
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
     ...(pins.length > 0 ? { rootPins: true } : {}),
     ...(settings.parallelism !== undefined && !tgInput ? { parallelism: settings.parallelism } : {}),

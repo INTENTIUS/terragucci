@@ -126,7 +126,7 @@ import { applyGroups } from "./cloud-identity";
 import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "./environment-tips";
 import { runCheckJob, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
-import { agentLoginWarning, configWarnings, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { agentLoginWarning, configWarnings, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageBase, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -753,6 +753,7 @@ export async function main(argv: string[]): Promise<number> {
           recipe = planRecipe(cwd, {
             binary: binary as Binary,
             terragrunt: settings.terragrunt !== undefined || existsSync(resolve(cwd, "root.hcl")) || existsSync(resolve(cwd, "terragrunt.hcl")),
+            base: imageBase(settings.image),
             ...(str(flags, "from") ? { from: str(flags, "from") } : {}),
             ...(str(flags, "platform") ? { platforms: str(flags, "platform")!.split(",").map((p) => p.trim()).filter(Boolean) } : {}),
             ...(imageMirror(settings.image) ? { mirror: imageMirror(settings.image) } : {}),
