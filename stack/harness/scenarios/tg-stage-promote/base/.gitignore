@@ -1,0 +1,4 @@
+node_modules/
+.chant/release-templates/
+.chant/promote/
+chant.tfplan*
