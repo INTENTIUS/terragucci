@@ -10,6 +10,21 @@ Release `0.4.64` is on npm as `@intentius/terragucci@0.4.64`, and its [GitHub re
 | Each repo | `npx @intentius/terragucci@0.4.64 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
+## In 0.4.65
+
+The CI images move to engine releases built with a Go toolchain and Go modules that fix the critical vulnerabilities a scan finds in the older binaries:
+
+| Engine | Was | Now | Image tag |
+|---|---|---|---|
+| OpenTofu | `1.13.1` | `1.13.9` | `<version>-tofu1.13.9`, and `<version>-tg1.2.0-tofu1.13.9` for the Terragrunt image |
+| Terraform | `1.14.9` | `1.17.2` | `<version>-tf1.17.2` |
+| choudoufu | `0.31.0` | `0.35.0` | `<version>-choudoufu0.35.0` |
+| Terragrunt | `1.2.0` | `1.2.0` | unchanged |
+
+A root that pins its own version still runs that version, which the job installs. So a root that has to stay on Terraform `1.14.9` pins it in `.terraform-version` or `required_version`. The image build checks each new release against the sha256 terragucci records for it and against the release's checksums file.
+
+The npm package's SBOM lists vitest `4` in place of vitest `3` and no longer lists tinypool `1.1.1`.
+
 ## In 0.4.64
 
 chant `0.124.112` is the pin for the package and the CI images.
