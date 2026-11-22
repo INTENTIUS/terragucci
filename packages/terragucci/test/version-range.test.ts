@@ -1,6 +1,7 @@
 // A root's required_version range against the version its job runs: what init and config check say.
 import { describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli";
+import { TOOL_VERSIONS } from "../src/images";
 import { init } from "../src/init";
 import { rangeConflicts, satisfies } from "../src/version-range";
 import { tmp, write } from "./helpers";
@@ -37,13 +38,13 @@ describe("rangeConflicts", () => {
 });
 
 describe("init and config check", () => {
-  const files = { "terragucci.yml": "binary: terraform\nforge: github\n", "old/main.tf": root("~> 1.5.0"), "new/main.tf": root("~> 1.14.0") };
+  const files = { "terragucci.yml": "binary: terraform\nforge: github\n", "old/main.tf": root("~> 1.5.0"), "new/main.tf": root(">= 1.14.0") };
 
   it("init notes each root the job's version breaks, with the fix", async () => {
     const dir = write(tmp(), files);
     const res = await init(dir, { dryRun: true });
-    expect(res.rangeConflicts).toEqual([{ root: "old", range: "~> 1.5.0", version: "1.14.9", fix: 'version: { "old": "1.5.0" }' }]);
-    expect(res.notes.some((n) => n.startsWith("old requires ~> 1.5.0, which excludes 1.14.9"))).toBe(true);
+    expect(res.rangeConflicts).toEqual([{ root: "old", range: "~> 1.5.0", version: TOOL_VERSIONS.terraform, fix: 'version: { "old": "1.5.0" }' }]);
+    expect(res.notes.some((n) => n.startsWith(`old requires ~> 1.5.0, which excludes ${TOOL_VERSIONS.terraform}`))).toBe(true);
   });
 
   it("config check warns the same and still passes", async () => {

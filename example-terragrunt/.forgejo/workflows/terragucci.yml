@@ -2,7 +2,7 @@
 # terragucci writes this file from terragucci.yml, or from its defaults when
 # the repo has none. Change terragucci.yml and run `npx terragucci init`
 # rather than editing it here.
-# Every job runs in ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1; init pins its digest once the image is published.
+# Every job runs in ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9; init pins its digest once the image is published.
 name: terragucci
 
 on:
@@ -41,7 +41,7 @@ jobs:
   check:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     if: (env.TF_IN_AUTOMATION || 'set') != '' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository))
     env:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
@@ -104,7 +104,7 @@ jobs:
   check-report:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     needs: check
     if: always() && (needs.check.result == 'success' || needs.check.result == 'failure')
     steps:
@@ -129,7 +129,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     env:
       TG_SHA: '${{ github.event.pull_request.head.sha }}'
       TG_PR: '${{ github.event.pull_request.number }}'
@@ -206,7 +206,7 @@ jobs:
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (needs.plan.result == 'success' || needs.plan.result == 'failure')
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - name: Check out the target branch's commit
         uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -252,7 +252,7 @@ jobs:
     if: (github.event_name == 'issue_comment' && (github.event.issue.pull_request || github.event.is_pull) && (startsWith(github.event.comment.body, '/terragucci plan') || (startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')))) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     env:
       TG_SHA: '${{ github.event.pull_request.head.sha }}'
       TG_PR: '${{ github.event.pull_request.number }}'
@@ -355,7 +355,7 @@ jobs:
     if: always() && (github.event_name == 'issue_comment' || github.event_name == 'workflow_dispatch') && needs.replan.outputs.go == '1' && (needs.replan.result == 'success' || needs.replan.result == 'failure')
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - name: Check out the target branch's commit
         uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -401,7 +401,7 @@ jobs:
     if: always() && needs.check.outputs.finding == 'true'
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     timeout-minutes: 25
     env:
       CHANT_COMMIT_NAME: terragucci-fmt
@@ -468,7 +468,7 @@ jobs:
     if: always() && needs.fmt.result == 'success'
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     env:
       CHANT_COMMIT_NAME: terragucci-fmt
       CHANT_COMMIT_ON: check
@@ -535,7 +535,7 @@ jobs:
     if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - name: Check out the target branch's commit
         uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -550,7 +550,7 @@ jobs:
       - check
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled() && (needs.check.result == ''success'' || (github.event_name == ''workflow_dispatch'' && needs.check.result == ''skipped''))) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     timeout-minutes: 180
     env:
       CHANT_LOCK_WAIT: '10500'
@@ -597,7 +597,7 @@ jobs:
       - apply-wave-1
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     timeout-minutes: 180
     env:
       CHANT_LOCK_WAIT: '10500'
@@ -648,7 +648,7 @@ jobs:
       - apply-wave-2
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     timeout-minutes: 180
     env:
       CHANT_LOCK_WAIT: '10500'
@@ -699,7 +699,7 @@ jobs:
       - apply-wave-3
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     timeout-minutes: 180
     env:
       CHANT_LOCK_WAIT: '10500'
@@ -750,7 +750,7 @@ jobs:
       - apply-wave-4
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     timeout-minutes: 180
     env:
       CHANT_LOCK_WAIT: '10500'
@@ -801,7 +801,7 @@ jobs:
       - apply-wave-1
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -826,7 +826,7 @@ jobs:
       - apply-wave-2
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -851,7 +851,7 @@ jobs:
       - apply-wave-3
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -876,7 +876,7 @@ jobs:
       - apply-wave-4
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -901,7 +901,7 @@ jobs:
       - apply-wave-5
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (!cancelled()) }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -924,7 +924,7 @@ jobs:
     runs-on: docker
     if: '${{ ((github.event_name == ''push'' && (github.ref == format(''refs/heads/{0}'', github.event.repository.default_branch)))) && (github.event_name == ''push'') }}'
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     steps:
       - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Terragrunt sources and providers
@@ -941,7 +941,7 @@ jobs:
   tips:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-terragrunt:0.4.53-tg1.2.0-tofu1.13.9
     needs: apply-done
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:

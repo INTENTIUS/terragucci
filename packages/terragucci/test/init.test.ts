@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TOOL_VERSIONS } from "../src/images";
 import { parseYAML } from "@intentius/chant/yaml";
 import { dashboardSettings, renderDashboards } from "../src/dashboards";
 import { init } from "../src/init";
@@ -253,7 +254,7 @@ describe("init", () => {
 
   it("terragucci.yml roots, binary, version and env reach the pipeline", async () => {
     const dir = write(withRemote("https://github.com/acme/infra.git"), {
-      "terragucci.yml": 'roots: ["network"]\nbinary: terraform\nversion: "1.14.9"\nenv:\n  AWS_REGION: eu-west-1\n',
+      "terragucci.yml": `roots: ["network"]\nbinary: terraform\nversion: "${TOOL_VERSIONS.terraform}"\nenv:\n  AWS_REGION: eu-west-1\n`,
     });
     const r = await init(dir);
     expect(r.roots).toEqual(["network"]);

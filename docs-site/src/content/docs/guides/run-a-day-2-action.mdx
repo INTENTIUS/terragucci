@@ -26,11 +26,11 @@ An action whose input moved after the approval (another payload, another target)
 
 | You need | Why |
 |---|---|
-| a root whose binary is `terraform`, at 1.14 or newer | only Terraform invokes an action block on its own; the CI image carries 1.14.9 |
+| a root whose binary is `terraform`, at 1.14 or newer | only Terraform invokes an action block on its own; the CI image carries 1.17.2 |
 | the action's address | `action.<type>.<label>` for a block in the root, `module.<name>.action.<type>.<label>` for one in a module the root calls |
 | `apply.resume` in `terragucci.yml` | the resume job runs an action once its approval stands |
 
-A root on OpenTofu or [choudoufu](/terragucci/concepts/glossary/#choudoufu) runs no action. Asking for one there is refused with the binary and the version the root runs, for example `this root runs OpenTofu (tofu 1.13.1), which has no action invocation`.
+A root on OpenTofu or [choudoufu](/terragucci/concepts/glossary/#choudoufu) runs no action. Asking for one there is refused with the binary and the version the root runs, for example `this root runs OpenTofu (tofu 1.13.9), which has no action invocation`.
 
 ## Ask from a pull request
 
