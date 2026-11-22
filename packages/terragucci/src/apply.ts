@@ -94,9 +94,9 @@ import { atmosStateReads as terraformAtmosReads } from "@intentius/chant-lexicon
 import type { OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
 import { detectActor } from "./actor";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import type { OpWaveDecision } from "@intentius/chant/op";
 import { type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
@@ -3234,11 +3234,52 @@ function unitReads(repo: string, waves: readonly string[][], wave: number, edges
 }
 
 /**
+ * The reports of wave `k` of `tf-apply` at `commit` that earlier jobs of this
+ * run left in the checkout (#1543). On GitHub and Forgejo a wave job downloads
+ * the run's artifacts into the op waves' outcomes directory, one directory per
+ * artifact (`terragucci-report-apply-wave-<k>`, with report.json and each
+ * root's redacted plan); on GitLab `needs` brings the previous wave's
+ * `terragucci-report/`. A report of another stage, wave or commit is skipped.
+ */
+export function artifactWaveReports(repo: string, k: number, commit: string): { dir: string; report: Report }[] {
+  const dirs = [join(repo, "terragucci-report")];
+  const opWaves = join(repo, ".chant", "op-waves");
+  const list = (d: string): string[] => {
+    try {
+      return readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(d, e.name)).sort();
+    } catch {
+      return [];
+    }
+  };
+  for (const op of list(opWaves)) dirs.push(...list(join(op, "outcomes")));
+  const out: { dir: string; report: Report }[] = [];
+  for (const dir of dirs) {
+    let report: Report;
+    try {
+      report = JSON.parse(readFileSync(join(dir, "report.json"), "utf-8")) as Report;
+    } catch {
+      continue;
+    }
+    if (report?.run?.stage !== APPLY_OP || report.run.wave !== k || !commit || report.run.commit !== commit || !Array.isArray(report.roots)) continue;
+    out.push({ dir, report });
+  }
+  return out;
+}
+
+/** `path` under `dir`, or undefined when it would leave it. */
+function insideDir(dir: string, path: string): string | undefined {
+  const base = resolve(dir);
+  const file = resolve(base, path);
+  return file.startsWith(base + sep) ? file : undefined;
+}
+
+/**
  * The reads that hold a wave at its gate (#1012): those whose outputs were
  * unknown when the change was reviewed, from the first carrier that can say
  * (./unknown-reads.ts). The upstream's plan in this push: a wave this job
- * planned earlier, else the upstream wave's report this commit put in the
- * reports bucket. A plan of it that changes nothing counts only when the
+ * planned earlier, the upstream wave's report this run's earlier jobs handed
+ * this one as an artifact, or the upstream wave's report this commit put in
+ * the reports bucket. A plan of it that changes nothing counts only when the
  * bucket's changes.json has no row of an earlier apply of the upstream at
  * this commit. Then the report of the pull request that merged as this
  * commit, which the forge names and the bucket holds. With neither, every
@@ -3280,6 +3321,13 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
       const out: { plan: unknown; from: string }[] = [];
       const mine = ctx.planned?.(k)?.find((p) => p.root === upstream && p.plan !== undefined);
       if (mine) out.push({ plan: mine.plan, from: `wave ${k}'s plan of ${upstream} in this job` });
+      // Each wave is a job of its own (#1543): the upstream wave's report, with its plans, came to this job as an artifact of this run.
+      for (const a of artifactWaveReports(repo, k, facts.commit)) {
+        const json = a.report.roots.find((x) => x.path === upstream)?.plan.json;
+        const file = json ? insideDir(a.dir, json) : undefined;
+        if (!file || !existsSync(file)) continue;
+        out.push({ plan: JSON.parse(readFileSync(file, "utf-8")) as unknown, from: `wave ${k}'s plan of ${upstream} in this run (${relative(repo, a.dir) || "."})` });
+      }
       if (!store) return out;
       // The upstream wave's own jobs: their reports in the bucket, with each root's redacted plan, which keeps after_unknown.
       for (const row of (await indexRows()).filter((r) => r.stage === APPLY_OP && r.commit === facts.commit && r.wave === k)) {

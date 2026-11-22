@@ -6,10 +6,10 @@
  * on the commit's first run still settles the read: a direct push that
  * changes only the reader applies it.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, parseApplied, parseLedger } from "../src/apply";
+import { applyWave, artifactWaveReports, parseApplied, parseLedger } from "../src/apply";
 import { unknownReads } from "../src/unknown-reads";
 import { git, write } from "./helpers";
 import { T, approve, setup } from "./apply-helpers";
@@ -64,7 +64,8 @@ describe("a wave that read an output unknown at review, applied again by a comme
     // The merge: wave 1 creates a, whose id is unknown until it applies; wave 2 plans b on the id a applied and waits.
     expect(await applyWave(work, { ...opts, wave: 1, now: T(1) })).toBe(0);
     expect(await applyWave(work, { ...opts, wave: 2, now: T(1) })).toBe(3);
-    expect(said()).toContain("b read id of a, unknown in wave 1's plan of a in this push");
+    // The job's workspace still holds wave 1's report (as GitLab's needs leaves it), and the bucket holds it too.
+    expect(said()).toMatch(/b read id of a, unknown in wave 1's plan of a in this run \(terragucci-report\), wave 1's plan of a in this push \(/);
 
     // The comment's apply: wave 1 plans again, changes nothing, and its report is the newest of this commit's wave 1.
     writeFileSync(join(plans, "a.json"), JSON.stringify(settled));
@@ -109,6 +110,78 @@ describe("a wave that read an output unknown at review, applied again by a comme
     expect(said()).toMatch(/wave 1's plan of a in this push \([^)]*\) changes nothing, and no earlier run of this commit applied a, so its outputs were known when the change was reviewed/);
     expect(said()).not.toContain("waits for an approval");
     expect(readLog(log)).toContain("applied b");
+  });
+});
+
+// #1543: each wave of chant's Op waves pipeline is a job of its own, and a repo may name no reports bucket. The upstream
+// wave's report reaches the reading wave's job as an artifact of the same run: on GitHub and Forgejo downloaded into the
+// outcomes directory, one directory per artifact; on GitLab as the previous job's terragucci-report/.
+describe("a wave that reads an earlier wave, with no reports bucket", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** a's first plan: creating x with its output id known at plan, as a bucket's configured name is. */
+  const createdKnown = { ...created, output_changes: { id: { actions: ["create"], before: null, after: "x-1", after_unknown: false } } };
+  const downloaded = join(".chant", "op-waves", "tf-apply", "outcomes", "terragucci-report-apply-wave-1");
+
+  function twoWaves(aPlan: unknown) {
+    const { work, bin, log } = setup({ "a/main.tf": state("a.tfstate"), "b/main.tf": state("b.tfstate") + reads });
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const plans = join(work, "..", "plans");
+    writeFileSync(join(plans, "a.json"), JSON.stringify(aPlan));
+    writeFileSync(join(plans, "b.json"), JSON.stringify(bPlan));
+    const opts = { layers: [["a"], ["b"]], binary: bin, gate: "on-destructive" as const };
+    return { work, log, opts, said: () => out.mock.calls.flat().join("\n") };
+  }
+
+  /** Wave 1's report as download-artifact leaves it in the next wave's job. */
+  function download(work: string): void {
+    mkdirSync(join(work, downloaded, ".."), { recursive: true });
+    renameSync(join(work, "terragucci-report"), join(work, downloaded));
+  }
+
+  it("reads the upstream wave's plan from the artifact the job downloaded, and applies when the output it reads was known", async () => {
+    const { work, log, opts, said } = twoWaves(createdKnown);
+    expect(await applyWave(work, { ...opts, wave: 1, now: T(1) })).toBe(0);
+    download(work);
+    expect(await applyWave(work, { ...opts, wave: 2, now: T(1) })).toBe(0);
+    expect(said()).toContain(`b reads no output of a that wave 1's plan of a in this run (${downloaded}) left unknown`);
+    expect(said()).not.toContain("waits for an approval");
+    expect(readLog(log)).toContain("applied b");
+  });
+
+  it("holds the reading wave when that plan left the output unknown, and says where it read it", async () => {
+    const { work, log, opts, said } = twoWaves(created);
+    expect(await applyWave(work, { ...opts, wave: 1, now: T(1) })).toBe(0);
+    download(work);
+    expect(await applyWave(work, { ...opts, wave: 2, now: T(1) })).toBe(3);
+    expect(said()).toContain(`b read id of a, unknown in wave 1's plan of a in this run (${downloaded}) and known only once wave 1 applied it`);
+    expect(readLog(log)).not.toContain("applied b");
+  });
+
+  it("reads the previous job's terragucci-report/, as GitLab's needs hands it on", async () => {
+    const { work, log, opts, said } = twoWaves(createdKnown);
+    expect(await applyWave(work, { ...opts, wave: 1, now: T(1) })).toBe(0);
+    expect(await applyWave(work, { ...opts, wave: 2, now: T(1) })).toBe(0);
+    expect(said()).toContain("b reads no output of a that wave 1's plan of a in this run (terragucci-report) left unknown");
+    expect(readLog(log)).toContain("applied b");
+  });
+
+  it("takes only a tf-apply report of the wave asked, at the job's commit", () => {
+    const { work } = twoWaves(createdKnown);
+    const put = (dir: string, run: object) => {
+      mkdirSync(join(work, dir), { recursive: true });
+      writeFileSync(join(work, dir, "report.json"), JSON.stringify({ run, roots: [], waves: [] }));
+    };
+    const out = join(".chant", "op-waves", "tf-apply", "outcomes");
+    put(join(out, "w1"), { stage: "tf-apply", wave: 1, commit: "c1" });
+    put(join(out, "w2"), { stage: "tf-apply", wave: 2, commit: "c1" });
+    put(join(out, "other"), { stage: "tf-apply", wave: 1, commit: "c0" });
+    put(join(out, "plan"), { stage: "tf-plan", commit: "c1" });
+    put("terragucci-report", { stage: "tf-apply", wave: 1, commit: "c1" });
+    expect(artifactWaveReports(work, 1, "c1").map((a) => a.dir.slice(work.length + 1)).sort()).toEqual([join(out, "w1"), "terragucci-report"].sort());
+    expect(artifactWaveReports(work, 1, "")).toEqual([]);
   });
 });
 
