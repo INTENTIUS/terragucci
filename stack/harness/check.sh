@@ -225,14 +225,15 @@ tg_net() {
   [ -f "$BUNDLE" ] || { log "no $BUNDLE; run 'just build-cli' first"; return 1; }
   [ -n "$AUTHOR_TOKEN" ] || { log "TERRAGUCCI_FORGEJO_AUTHOR_TOKEN is not set; harness.ts passes forgejo.env"; return 1; }
   overlay="$(break_overlay)"
-  local -a mounts=(-v "$BUNDLE:/opt/tg/terragucci.mjs:ro")
+  # Under /usr/local, so the bundle resolves the image's /usr/local/node_modules as the image's own terragucci does.
+  local -a mounts=(-v "$BUNDLE:/usr/local/tg/terragucci.mjs:ro")
   [ -z "$overlay" ] || mounts+=(-v "$overlay:/break:ro")
   [ ! -f "$ROOT/.chant-local/intentius-chant.tgz" ] || mounts+=(-v "$ROOT/.chant-local:/chant-local:ro")
   run_copied --rm ${tty[@]+"${tty[@]}"} --network "$TG_NETWORK" "${mounts[@]}" \
     -e "TERRAGUCCI_FORGEJO_TOKEN=$AUTHOR_TOKEN" -e "TG_CLONE=http://$AUTHOR:$AUTHOR_TOKEN@forgejo:3000/$REPO.git" -e "TG_AUTHOR=$AUTHOR" \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    --entrypoint sh "$image" -c 'mkdir -p /tmp/bin && printf "#!/bin/sh\nexec node /opt/tg/terragucci.mjs \"\$@\"\n" > /tmp/bin/terragucci && chmod +x /tmp/bin/terragucci && export PATH="/tmp/bin:$PATH" \
+    --entrypoint sh "$image" -c 'mkdir -p /tmp/bin && printf "#!/bin/sh\nexec node /usr/local/tg/terragucci.mjs \"\$@\"\n" > /tmp/bin/terragucci && chmod +x /tmp/bin/terragucci && export PATH="/tmp/bin:$PATH" \
       && git clone -q --branch main "$TG_CLONE" /tmp/repo >&2 && cd /tmp/repo \
       && { git fetch -q origin chant/lifecycle:chant/lifecycle 2>/dev/null || true; } \
       && git config user.name "$TG_AUTHOR" && git config user.email "$TG_AUTHOR@terragucci.local" \

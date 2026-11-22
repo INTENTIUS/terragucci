@@ -271,6 +271,10 @@ async function run(args: string[]): Promise<number> {
       reset: async () => {
         for (const pull of await forge.openPulls()) await forge.closePull(pull);
         for (const b of await forge.branches()) if (b !== "main") await forge.deleteBranch(b);
+        // The arm's release tags (release/<label>) go too, so the next arm cuts the same label.
+        const remote = `${env.TERRAGUCCI_FORGEJO_URL!.replace(/^http:\/\//, `http://${env.TERRAGUCCI_FORGEJO_USER}:${env.TERRAGUCCI_FORGEJO_TOKEN}@`)}/${seed.REPO}.git`;
+        const tags = sh("git", ["ls-remote", "--tags", "--refs", remote]).stdout.split("\n").map((l) => l.split("\t")[1]).filter((r): r is string => !!r);
+        if (tags.length > 0 && sh("git", ["push", "-q", remote, "--delete", ...tags]).status !== 0) throw new Error(`the tags of ${seed.REPO} were not deleted`);
         await forge.forceMain(seed.BASE_SHA);
         const settled = sh("bash", [join(HERE, "check.sh"), "settle"], { ...process.env, ...checkEnv() });
         if (settled.status !== 0) throw new Error(`the base of ${seed.REPO} did not settle`);

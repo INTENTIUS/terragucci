@@ -5,3 +5,5 @@ chant.tfplan*
 # terragucci's working output in a job: the wave report and a split wave's decision.
 terragucci-report/
 terragucci-wave/
+# Each root's init, as a job runs it.
+.terraform/
