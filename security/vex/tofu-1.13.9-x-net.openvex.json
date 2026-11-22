@@ -1,0 +1,36 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/INTENTIUS/terragucci/blob/main/security/vex/tofu-1.13.9-x-net.openvex.json",
+  "author": "terragucci maintainers",
+  "role": "Document Creator",
+  "timestamp": "2026-11-22T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "@id": "https://pkg.go.dev/vuln/GO-2026-6612",
+        "name": "GO-2026-6612",
+        "aliases": ["CVE-2026-78663"]
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/terragucci-tofu?repository_url=ghcr.io/intentius/terragucci-tofu",
+          "subcomponents": [
+            { "@id": "pkg:golang/github.com/opentofu/opentofu@v1.13.9" },
+            { "@id": "pkg:golang/golang.org/x/net@v0.57.0" }
+          ]
+        },
+        {
+          "@id": "pkg:oci/terragucci-terragrunt?repository_url=ghcr.io/intentius/terragucci-terragrunt",
+          "subcomponents": [
+            { "@id": "pkg:golang/github.com/opentofu/opentofu@v1.13.9" },
+            { "@id": "pkg:golang/golang.org/x/net@v0.57.0" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "golang.org/x/net v0.57.0 is reported in these images because it is compiled into the upstream OpenTofu 1.13.9 release binary they install at /opt/terragucci/tofu-1.13.9/tofu (tofu_1.13.9_linux_amd64.tar.gz sha256 b34b327cc1ef07178207b6f2cd1f5276537d3e5b7be316500f6dac50d4c0a857, tofu_1.13.9_linux_arm64.tar.gz sha256 5dc196dde75b667e4806d358310ec96742774cd0993c54c1237efee5644b69b8). The double flow-control refund is in x/net's own HTTP/2 server, http2/server.go (serverConn.closeStream and requestBody.Read). In x/net v0.57.0 that file builds only under the constraint !(go1.27 && !http2legacy). OpenTofu 1.13.9 is built with Go 1.27.3 and no build tags, so http2/server.go is not compiled: x/net's http2.Server is the wrapper in http2/server_wrap.go around net/http's own server, which Go 1.27.2 fixed for this advisory. The function tables of both release binaries hold x/net http2 framing, client and transport code and no x/net server function (no serverConn, requestBody, Server or ConfigureServer). The statement covers this advisory in OpenTofu 1.13.9's x/net v0.57.0 only; delete it when the images move to an OpenTofu release built with golang.org/x/net v0.60.0 or later."
+    }
+  ]
+}
