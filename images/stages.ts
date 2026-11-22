@@ -4,14 +4,17 @@
  */
 import { productImageStages, type CiImageTool } from "@intentius/chant/ci-image";
 import pkg from "../packages/terragucci/package.json" with { type: "json" };
-import { CI_IMAGE_BASE_CHANT_FLOOR, chantTakesImageBase, TOOL_VERSIONS, type ImageBase } from "../packages/terragucci/src/images";
+import { CI_IMAGE_BASE_CHANT_FLOOR, chantTakesImageBase, TOOL_VERSIONS, toolSha256, type ImageBase } from "../packages/terragucci/src/images";
 
-/** Each engine with its pinned version, written out so no lookup computes a key. */
+/**
+ * Each engine with its pinned version, written out so no lookup computes a key, and the sums terragucci records for a
+ * release chant records none for (TOOL_SHA256); left undefined, chant checks its own (CI_TOOL_SHA256).
+ */
 export const ENGINES = {
-  tofu: { tool: "tofu", version: TOOL_VERSIONS.tofu },
-  terraform: { tool: "terraform", version: TOOL_VERSIONS.terraform },
-  terragrunt: { tool: "terragrunt", version: TOOL_VERSIONS.terragrunt },
-  choudoufu: { tool: "choudoufu", version: TOOL_VERSIONS.choudoufu },
+  tofu: { tool: "tofu", version: TOOL_VERSIONS.tofu, sha256: toolSha256("tofu") },
+  terraform: { tool: "terraform", version: TOOL_VERSIONS.terraform, sha256: toolSha256("terraform") },
+  terragrunt: { tool: "terragrunt", version: TOOL_VERSIONS.terragrunt, sha256: toolSha256("terragrunt") },
+  choudoufu: { tool: "choudoufu", version: TOOL_VERSIONS.choudoufu, sha256: toolSha256("choudoufu") },
 } satisfies Record<string, CiImageTool>;
 
 /**

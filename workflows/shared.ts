@@ -11,6 +11,7 @@
 
 import { CI_TOOL_ROOT, ciToolBin, ciToolInstallLine } from "@intentius/chant/ci-image";
 import { Step } from "@intentius/chant-lexicon-github";
+import { toolSha256 } from "../packages/terragucci/src/images";
 
 /**
  * Actions by commit SHA, with the tag each resolved from in the comment.
@@ -53,13 +54,16 @@ export const installAct = (): InstanceType<typeof Step> =>
  * OpenTofu at the version the tofu image carries, for the tests that run the
  * real binary (they skip where `tofu` is missing, so the check job installs
  * it: a laptop has it, a fresh runner does not). chant's install line checks
- * it against the release's checksums file and the sha256 chant records.
+ * it against the release's checksums file and the sha256 recorded for it, the
+ * one the images check (TOOL_SHA256 in packages/terragucci/src/images.ts, else chant's).
  */
-export const installTofu = (version: string): InstanceType<typeof Step> =>
-  new Step({
+export const installTofu = (version: string): InstanceType<typeof Step> => {
+  const sha256 = toolSha256("tofu", version);
+  return new Step({
     name: "Install OpenTofu",
-    run: [ciToolInstallLine("tofu", version, { sudo: true }), `tofu version`].join("\n"),
+    run: [ciToolInstallLine("tofu", version, { sudo: true, ...(sha256 ? { sha256 } : {}) }), `tofu version`].join("\n"),
   });
+};
 
 /** Where installTerragrunt puts Terragrunt: off the path, so the tests that find no Terragrunt on it stay as they are. */
 export const testTerragrunt = (version: string): string => ciToolBin("terragrunt", version, CI_TOOL_ROOT);

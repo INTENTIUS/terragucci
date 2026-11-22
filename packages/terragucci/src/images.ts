@@ -57,17 +57,42 @@ export const REGISTRY = "ghcr.io/intentius";
 
 /**
  * The tool versions the images carry, and the defaults when a repo pins none.
- * chant records the sha256 of each by architecture (CI_TOOL_SHA256 in
- * `@intentius/chant/ci-image`, chant issue 4908), and an image's build
- * checks each engine against it.
+ * An image's build checks each engine against the sha256 recorded for it by
+ * architecture: TOOL_SHA256 below, else the one chant records (CI_TOOL_SHA256
+ * in `@intentius/chant/ci-image`, chant issue 4908).
  */
 export const TOOL_VERSIONS = {
-  tofu: "1.13.1",
-  terraform: "1.14.9",
+  tofu: "1.13.9",
+  terraform: "1.17.2",
   terragrunt: "1.2.0",
   /** A choudoufu release (INTENTIUS/choudoufu), not the OpenTofu version it is forked from. */
-  choudoufu: "0.31.0",
+  choudoufu: "0.35.0",
 } as const;
+
+/**
+ * The sha256 of each engine release file the images carry that chant records none for, by architecture, copied from
+ * the release's checksums file: `tofu_<v>_SHA256SUMS`, `terraform_<v>_SHA256SUMS`, choudoufu's `SHA256SUMS`. Keyed
+ * `<tool>-<version>`, so an engine whose version moves without its sums fails the image build instead of using stale ones.
+ */
+export const TOOL_SHA256: Readonly<Record<string, { amd64: string; arm64: string }>> = {
+  "tofu-1.13.9": {
+    amd64: "b34b327cc1ef07178207b6f2cd1f5276537d3e5b7be316500f6dac50d4c0a857",
+    arm64: "5dc196dde75b667e4806d358310ec96742774cd0993c54c1237efee5644b69b8",
+  },
+  "terraform-1.17.2": {
+    amd64: "e6f16b2f0b137ee5729caa8c4e79a3bae4ee261acd198a1fcfa8584a6296605b",
+    arm64: "858e08c181a76b6b223e8c767a8e983922eebe2d062db949a2de66ce040c368c",
+  },
+  "choudoufu-0.35.0": {
+    amd64: "548b707444db2620f889f9b11ab6cecd090807d45f6c08fe131674b2d8480cd5",
+    arm64: "297401beb7bfc5d54db90aba1b7c5060a34744f86e782a0780ed1fc59b94c063",
+  },
+};
+
+/** The sums TOOL_SHA256 records for `tool` at its pinned version, for chant's `sha256` option; none for a release chant records itself. */
+export function toolSha256(tool: keyof typeof TOOL_VERSIONS, version: string = TOOL_VERSIONS[tool]): { amd64: string; arm64: string } | undefined {
+  return TOOL_SHA256[`${tool}-${version}`];
+}
 
 export interface ImageRef {
   repository: string;

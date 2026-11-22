@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { TOOL_VERSIONS } from "../src/images";
 import { ACTION_APPLIED, ACTION_LEDGER, actionApproveCommand, engineRefusal, noActionReply, resumableActions, resumeActions, runAction, type ActionOptions } from "../src/action";
 import { writeLedger } from "../src/apply";
 import { approveGate, isGateKeyword } from "../src/approve";
@@ -81,7 +82,7 @@ describe("the action comment", () => {
   });
 
   it("where the pipeline has no action workflow, the reply names the engine and its version", () => {
-    expect(noActionReply("tofu")).toBe("an action runs on Terraform 1.14 or newer, and this repository's roots run OpenTofu (tofu 1.13.1), which has no action invocation");
+    expect(noActionReply("tofu")).toBe(`an action runs on Terraform 1.14 or newer, and this repository's roots run OpenTofu (tofu ${TOOL_VERSIONS.tofu}), which has no action invocation`);
     expect(noActionReply("terraform")).toMatch(/no action workflow/);
   });
 });
@@ -153,11 +154,11 @@ describe("terragucci action", () => {
     const r = repo("tofu");
     const done = await cli(r.work, "action", "apps/orders", ADDRESS, "--json");
     expect(done.code).toBe(1);
-    expect(JSON.parse(done.out)).toEqual({ status: "refused", root: "apps/orders", address: ADDRESS, reason: "apps/orders: an action runs on Terraform 1.14 or newer, and this root runs OpenTofu (tofu 1.13.1), which has no action invocation" });
-    expect(engineRefusal("x", "choudoufu")).toContain("choudoufu (choudoufu 0.31.0)");
+    expect(JSON.parse(done.out)).toEqual({ status: "refused", root: "apps/orders", address: ADDRESS, reason: `apps/orders: an action runs on Terraform 1.14 or newer, and this root runs OpenTofu (tofu ${TOOL_VERSIONS.tofu}), which has no action invocation` });
+    expect(engineRefusal("x", "choudoufu")).toContain(`choudoufu (choudoufu ${TOOL_VERSIONS.choudoufu})`);
     expect(engineRefusal("x", "terraform")).toBeUndefined();
     const text = await cli(r.work, "action", "apps/orders", ADDRESS);
-    expect(text.out).toContain("tofu 1.13.1");
+    expect(text.out).toContain(`tofu ${TOOL_VERSIONS.tofu}`);
   });
 
   it("refuses an address that is no action address, and a path that is no root", async () => {

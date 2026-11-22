@@ -10,6 +10,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { ROOTS_NOT_TERRAGRUNT } from "../src/config";
 import { init } from "../src/init";
+import { TOOL_VERSIONS } from "../src/images";
 import type { PolicyExec } from "../src/report/policy";
 import { runStage } from "../src/report/stage";
 import {
@@ -414,7 +415,7 @@ describe("init in a Terragrunt repo", () => {
     const repo = liveRepo({ "terragucci.yml": "binary: terraform\nterragrunt:\n  version: 1.1.6\n" });
     const r = await init(repo, { terragrunt: "/nonexistent/terragrunt" });
     const install = body(r.files[0].content).jobs.check.steps[1];
-    expect(install.name).toBe("Install terragrunt 1.1.6, terraform 1.14.9");
+    expect(install.name).toBe(`Install terragrunt 1.1.6, terraform ${TOOL_VERSIONS.terraform}`);
     expect(install.run).toContain("terragucci install terragrunt 1.1.6");
   });
 
