@@ -379,7 +379,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
 | `TERRAGUCCI_TERRAMATE` | | the `terramate` executable `init` and `terragucci terramate generate` run; `terramate` on the path by default |
 | `TERRAGUCCI_ATMOS` | | the `atmos` executable `init`, `terragucci atmos write` and, with `oidc.roles`, `terragucci config check` run; `atmos` on the path by default |
-| `TOFU_INSTALL_DIR` |  | where `terragucci install` and the stages put the binary, one directory per tool and version, so a runner that keeps it reuses each version; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
+| `TOFU_INSTALL_DIR` |  | where `terragucci install` and the stages put the binary, one directory per tool and version, so a runner that keeps it reuses each version; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default; a job whose user cannot write it, and that does not find the release there, installs under `$HOME/.cache/terragucci-bin` and says so |
 | `RUNNER_TEMP` |  | set by GitHub and Forgejo runners |
 | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` |  | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
 | `TF_DATA_DIR`, `TF_WORKSPACE` |  | where a root's initialised backend is recorded and which workspace it runs in; a `tf-apply` wave reads both to find the state whose version it records |
