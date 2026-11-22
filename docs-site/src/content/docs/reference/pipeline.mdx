@@ -365,7 +365,7 @@ The push starts the pull request's plan job, which plans the change with its rea
 
 ### The drift agent
 
-The drift job is a chant drift Op in `terragucci-drift.yml` ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)). With `agent.drift` set (GitHub or Forgejo), chant's agent job and push job follow it in that workflow, and run when the drift run opened the drift issue: its script then exits with chant's `drift` code (2). Neither job gets a cloud role.
+The drift job is a chant drift Op in `terragucci-drift.yml` ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)). With `agent.drift` set (GitHub or Forgejo), chant's agent job and push job follow it in that workflow, and run when the drift run opened the drift issue: its script then sets the drift job's `drift` output, and the drift job ends green so both forges hand its outputs on. The `terragucci-drift-found` job then exits with chant's `drift` code (2), so the run shows red on drift. Neither agent job gets a cloud role.
 
 | Job | Token | Does |
 |---|---|---|

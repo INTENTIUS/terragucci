@@ -102,22 +102,23 @@ Merging the pull request keeps the change made outside the code, and its apply g
 
 ## The jobs
 
-The drift job is a [chant](/terragucci/concepts/glossary/#chant) drift Op ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)), and `agent.drift` adds chant's agent job and push job after it:
+The drift job is a [chant](/terragucci/concepts/glossary/#chant) drift Op ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)), and `agent.drift` adds chant's agent job and push job after it, with terragucci's drift-found job beside them:
 
 | File | Holds |
 |---|---|
 | `.chant/ops/terragucci-drift.sh` | the drift step's script, the same `terragucci stage tf-drift` run, so the drift report, the drift issue, `respond.drift` and `notify` are unchanged |
 | `.chant/ops/terragucci-drift.spec.json` | one scheduled Op on `drift`'s cron that runs the script, keeps the drift report as an artifact, and holds chant's drift agent from `agent.drift` |
-| `.github/workflows/terragucci-drift.yml` (or `.forgejo/workflows/`) | chant's drift job, then its agent job and push job |
+| `.github/workflows/terragucci-drift.yml` (or `.forgejo/workflows/`) | chant's drift job, then its agent job and push job, and the `terragucci-drift-found` job |
 | `ops/terragucci-drift.op.ts` | a `TerraformWatchOp` per root of a plain repo, so `chant run terragucci-drift-<root>` reads one root by hand |
 
-One job plans every root, since the repo keeps one drift issue. A run that opens the drift issue lists each drifted resource in its output, with the state's value and the live one (never a sensitive one, `terragucci drift-agent show`), and exits with chant's `drift` code (2), so the run shows red and chant's agent job runs with the run's output in its prompt. The prompt treats that output and every file as untrusted input, since a value in the cloud can hold any text. The keys map as they do for [the comment agent](/terragucci/guides/agent-change-a-pull-request/#on-chants-agent-job), and the runs are recorded under op `terragucci-drift`.
+One job plans every root, since the repo keeps one drift issue. A run that opens the drift issue lists each drifted resource in its output, with the state's value and the live one (never a sensitive one, `terragucci drift-agent show`), and sets the drift job's `drift` output. The drift job then ends green, so the agent job reads its outputs on GitHub and Forgejo alike, and runs with the run's output in its prompt. The `terragucci-drift-found` job exits with chant's `drift` code (2) beside it, so the run shows red on drift. The prompt treats that output and every file as untrusted input, since a value in the cloud can hold any text. The keys map as they do for [the comment agent](/terragucci/guides/agent-change-a-pull-request/#on-chants-agent-job), and the runs are recorded under op `terragucci-drift`.
 
 ## Permissions
 
 | Job | Does | Holds |
 |---|---|---|
-| the drift job | plans every root with `-refresh-only`, opens the drift issue, and exits with the `drift` code when it did | the plan role, and its token for the issue |
+| the drift job | plans every root with `-refresh-only`, opens the drift issue, and sets its `drift` output when it did | the plan role, and its token for the issue |
+| the drift-found job | exits with the `drift` code when the drift job set its `drift` output, so the run shows red | nothing |
 | the agent job | runs the agent on the commit the drift job planned, and keeps its change as a patch | a read-only job token, which the agent's step runs without; the model's key, in the agent's step alone |
 | the push job | applies the patch in a fresh job, refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), and opens or updates the pull request from `terragucci/agent/terragucci-drift`, while every commit on that branch is the agent's | the agent's token |
 | the plan job | plans the pull request with its read-only role | the plan role |
