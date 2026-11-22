@@ -1,5 +1,8 @@
 import type { ChantConfig } from "@intentius/chant";
-import { ciImages, REGISTRY, imageTag } from "./packages/terragucci/src/images";
+import { ciImages, IMAGE_BASES, REGISTRY, imageTag, releaseImageName } from "./packages/terragucci/src/images";
+
+/** Each image in each set: the Debian image `tofu` and the Chainguard image `tofu-chainguard`, as the release names them. */
+const releaseImages = IMAGE_BASES.flatMap((base) => ciImages.map((name) => ({ name, base, release: releaseImageName(name, base), file: `Dockerfile.${name}${base === "chainguard" ? "Chainguard" : ""}` })));
 
 /** The Changes page a GitHub release takes its notes from: its `## In <version>` section. */
 const CHANGES = "docs-site/src/content/docs/reference/whats-new.mdx";
@@ -29,8 +32,8 @@ export default {
   // the environments a gate names, chant components) leaves them out.
   exclude: ["stack/harness/scenarios"],
 
-  // The release (CONTRIBUTING.md, Releasing): chant's cut builds the four CI images as OCI
-  // archives and records their digests, the bundle pins them (scripts/build-cli.mjs reads
+  // The release (CONTRIBUTING.md, Releasing): chant's cut builds the four CI images in each of two sets, Debian and
+  // Chainguard, as OCI archives and records their digests, the bundle pins them (scripts/build-cli.mjs reads
   // CHANT_RELEASE_DIGESTS), and chant's publish pushes the images, publishes the package and
   // makes the GitHub release. The label is the version: the cut and the publish job stamp it into
   // packages/terragucci/package.json and the lockfile (release.version), so main keeps its committed version.
@@ -63,29 +66,34 @@ export default {
     // chant builds each image from its Dockerfile (chant issue 4819): reproducibly, as an OCI archive at
     // dist/images/<name>.tar, after the bundle the image copies in is built with no digests file named.
     // TERRAGUCCI_IMAGE_PLATFORMS narrows the platforms for a local build.
-    images: ciImages.map((name) => ({
-      name,
-      dockerfile: `images/Dockerfile.${name}`,
+    //
+    // Eight images: each of the four on Debian and on Chainguard's public images, whose bases the Dockerfiles pin by digest
+    // (a release under supply-chain refuses a FROM that is not pinned). The Chainguard set needs no pull login. A
+    // Chainguard org's registry takes a `pull` entry on each Chainguard image here (registry cgr.dev, usernameEnv and
+    // passwordEnv naming secrets) and `base: { registry }` in images/stages.ts; see CONTRIBUTING.md.
+    images: releaseImages.map(({ release, file }) => ({
+      name: release,
+      dockerfile: `images/${file}`,
       prepare: "node scripts/build-cli.mjs >/dev/null",
       ...(process.env.TERRAGUCCI_IMAGE_PLATFORMS ? { platforms: process.env.TERRAGUCCI_IMAGE_PLATFORMS.split(",") } : {}),
     })),
     publish: [
-      ...ciImages.map((name) => ({
+      // Both sets go to the same repository, the Chainguard tags ending in -chainguard. The image's SBOM is the one the
+      // scan makes from its layers (supply-chain), so each lists the OS packages of its base.
+      ...releaseImages.map(({ name, base, release }) => ({
         type: "oci" as const,
-        image: `dist/images/${name}.tar`,
+        image: `dist/images/${release}.tar`,
         repository: `${REGISTRY}/terragucci-${name}`,
-        tags: [imageTag(name, "{label}")],
-        // The image's SBOM is not the repo's lockfile, so none is attached.
-        sbom: false as const,
+        tags: [imageTag(name, "{label}", base)],
       })),
-      // The package pins the images by the digests the cut recorded; the plan refuses any other.
-      { type: "npm" as const, packages: ["packages/terragucci"], access: "public" as const, stage: false, sbom: false as const, pins: "dist/image-digests.json" },
+      // The package pins the images of both sets by the digests the cut recorded; the plan refuses any other. Its SBOM
+      // is the one scripts/build-cli.mjs writes for a release build (packages/terragucci/sbom.spdx.json).
+      { type: "npm" as const, packages: ["packages/terragucci"], access: "public" as const, stage: false, pins: "dist/image-digests.json" },
       {
         type: "forge" as const,
         forge: "github" as const,
         repo: "INTENTIUS/terragucci",
         assets: [],
-        sbom: false as const,
         notes: {
           file: CHANGES,
           heading: "## In {version}",

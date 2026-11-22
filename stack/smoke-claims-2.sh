@@ -339,6 +339,131 @@ claim_init/foreign_checkout() {
   return $rc
 }
 
+claim_init/chainguard_job() {
+  # A real Forgejo container job on the Chainguard image that image.base: chainguard names, which runs as user
+  # 65532 (the Debian image's jobs run as root). init writes the pipeline for a repo with that key, and the claim
+  # checks it runs in the -chainguard image. A workflow of the claim's own then runs in that image on the stack's
+  # runner, with the checkout the runner owns, and prints one `CG: <key>=<value>` line per fact:
+  #   the checkout succeeded and HEAD is the pushed commit
+  #   the job's user is 65532, CHANT_IMAGE_USER says so, and $HOME is writable
+  #   git works in the workspace (the image's system safe.directory), and the workspace is writable
+  #   the engine the image carries is linked in /usr/local/bin, and /opt/terragucci belongs to 65532
+  #   an engine release the image lacks (tofu 1.12.0) installs with `terragucci install`, which downloads with node and
+  #   writes under $RUNNER_TEMP, and is first on PATH
+  #   a plan step runs: tofu init and plan in a root with a terraform_data resource, as 65532
+  # The Debian images' jobs on this runner are the other claims', which run the generated pipeline as root. The image must
+  # be built from this tree (just images), since the user, the git setting and the bundle are in it.
+  # BREAK: GIT_CONFIG_NOSYSTEM=1 on the job, so git skips the image's system config and refuses the checkout the
+  # runner owns, and the git facts and the plan are missing.
+  log() { echo "[smoke chainguard-job] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cgjob" tree sha image cimage wf logs job rc=0 want key
+  image="$(image_tag tofu-chainguard)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  mkdir -p "$tree/app" "$tree/.forgejo/workflows"
+  cat > "$tree/app/main.tf" <<'TF'
+terraform {
+  backend "local" {}
+}
+
+resource "terraform_data" "probe" {
+  input = "chainguard-job"
+}
+TF
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\nimage:\n  base: chainguard\n' > "$tree/terragucci.yml"
+  # init's pipeline, written beside the claim's workflow and not pushed: it must run in the Chainguard image.
+  mkdir -p "$work/init" && cp -R "$tree/." "$work/init/"
+  (cd "$work/init" && "$TERRAGUCCI" init >/dev/null) || { log "init failed for image.base: chainguard"; return 1; }
+  # init writes the published tag; this tree's own suffix (TG_IMAGE_SUFFIX) is added when push_tree pushes the workflow.
+  cimage="${image%"${TG_IMAGE_SUFFIX:-}"}"
+  case "$cimage" in *-chainguard) ;; *) log "the Chainguard image's tag does not end in -chainguard: $cimage"; return 1 ;; esac
+  grep -qF "$cimage" "$work/init/.forgejo/workflows/terragucci.yml" \
+    || { log "the pipeline init wrote for image.base: chainguard does not run in $cimage"; return 1; }
+  grep -q 'terragucci-tofu:[^ ]*-chainguard' "$work/init/.forgejo/workflows/terragucci.yml" || { log "no -chainguard image in the pipeline"; return 1; }
+  wf="$tree/.forgejo/workflows/chainguard-job.yml"
+  cat > "$wf" <<'YAML'
+name: chainguard-job
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  probe:
+    runs-on: docker
+    container: IMAGE
+    env:
+      TF_IN_AUTOMATION: '1'
+      TF_INPUT: '0'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The job, its user and its workspace
+        run: |
+          echo "CG: head=$(git rev-parse HEAD)"
+          echo "CG: uid=$(id -u)"
+          echo "CG: image_user_env=${CHANT_IMAGE_USER:-}"
+          echo "CG: home=$HOME"
+          echo "CG: workspace_owner=$(stat -c %u .)"
+          git status --porcelain >/dev/null && echo "CG: git=ok"
+          git config --system --get-all safe.directory | grep -qx '\*' && echo "CG: safe_directory=ok"
+          touch chainguard-write-probe && echo "CG: write_workspace=ok"
+          touch "$HOME/chainguard-write-probe" && echo "CG: write_home=ok"
+          echo "CG: tofu_link=$(readlink /usr/local/bin/tofu)"
+          echo "CG: tool_root_owner=$(stat -c %u /opt/terragucci)"
+      - name: A plan
+        run: |
+          tofu -chdir=app init -input=false -no-color >/dev/null
+          out="$(tofu -chdir=app plan -input=false -no-color)"
+          echo "$out" | tail -3
+          echo "$out" | grep -q '1 to add' && echo "CG: plan=ok"
+      - name: An engine the image lacks
+        run: |
+          dir="$(terragucci install tofu 1.12.0)"
+          export PATH="$dir:$PATH"
+          echo "CG: install_dir=$dir"
+          echo "CG: tofu_on_path=$(command -v tofu)"
+          echo "CG: tofu_version=$(tofu version | head -1)"
+YAML
+  sed -i.bak "s#container: IMAGE#container: $cimage#" "$wf" && rm -f "$wf.bak"
+  [ -n "${BREAK:-}" ] && sed -i.bak "s#^    env:#    env:\n      GIT_CONFIG_NOSYSTEM: '1'#" "$wf" && rm -f "$wf.bak"
+  fresh_repo cgjob || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  sha="$(push_tree "$tree" "$repo" main "chainguard-job: a container job as 65532")" || return 1
+  wait_run "$repo" "$sha" || return 1
+  job="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | select(.name == "probe") | .id' | head -1)"
+  logs="$([ -n "$job" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$job/logs" 2>/dev/null)"
+  fact() { grep -o "CG: $1=.*" <<<"$logs" | head -1 | sed "s/^CG: $1=//" | tr -d '\r'; }
+  [ "$RUN_STATUS" = success ] || { log "the job ended '$RUN_STATUS'"; rc=1; }
+  want() { # key, value
+    local got
+    got="$(fact "$1")"
+    if [ "$got" = "$2" ]; then log "$1 = $got"; else log "$1 is '${got:-missing}', not '$2'"; rc=1; fi
+  }
+  want head "$sha"
+  want uid 65532
+  want image_user_env 65532
+  want git ok
+  want safe_directory ok
+  want write_workspace ok
+  want write_home ok
+  want plan ok
+  want tofu_link /opt/terragucci/tofu-1.13.1/tofu
+  want tool_root_owner 65532
+  want tofu_version "OpenTofu v1.12.0"
+  key="$(fact install_dir)"
+  [ -n "$key" ] && [ "$(fact tofu_on_path)" = "$key/tofu" ] || { log "tofu 1.12.0 is not first on PATH from ${key:-no install dir}: $(fact tofu_on_path)"; rc=1; }
+  log "the workspace's owner is uid $(fact workspace_owner) and the job's user is $(fact uid)"
+  [ "$(fact workspace_owner)" != 65532 ] || log "the runner's workspace belongs to 65532, so this run did not test a checkout another uid owns"
+  [ "$(fact home | head -c1)" = / ] || { log "no \$HOME in the job"; rc=1; }
+  [ "$rc" = 0 ] || { [ -z "${BREAK:-}" ] && print_logs "$repo" "$RUN_ID" >&2; }
+  [ $rc = 0 ] && log "a container job in $cimage ran as 65532: checkout, git, writes in the workspace and \$HOME, an engine install and a plan all passed"
+  return $rc
+}
+
 # ── dashboards ────────────────────────────────────────────────────────────
 # The dashboards `dashboards: true` writes into a repo, provisioned in the
 # observability profile's Grafana from stack/observability/terragucci/ (the

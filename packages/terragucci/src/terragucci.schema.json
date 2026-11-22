@@ -409,15 +409,30 @@
                   "pattern": "^/"
                 }
               ]
+            },
+            "base": {
+              "enum": [
+                "debian",
+                "chainguard"
+              ]
             }
           },
           "additionalProperties": false,
-          "required": [
-            "name"
+          "anyOf": [
+            {
+              "required": [
+                "name"
+              ]
+            },
+            {
+              "required": [
+                "base"
+              ]
+            }
           ]
         }
       ],
-      "description": "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries."
+      "description": "The image every job runs in, built FROM terragucci's; as a map, its name, the provider mirror it carries and base, the set of terragucci's images (debian or chainguard)."
     },
     "notify": {
       "type": "object",
@@ -4245,15 +4260,30 @@
                       "pattern": "^/"
                     }
                   ]
+                },
+                "base": {
+                  "enum": [
+                    "debian",
+                    "chainguard"
+                  ]
                 }
               },
               "additionalProperties": false,
-              "required": [
-                "name"
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "base"
+                  ]
+                }
               ]
             }
           ],
-          "description": "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries."
+          "description": "The image every job runs in, built FROM terragucci's; as a map, its name, the provider mirror it carries and base, the set of terragucci's images (debian or chainguard)."
         },
         "notify": {
           "type": "object",

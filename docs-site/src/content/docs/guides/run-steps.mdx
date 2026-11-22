@@ -154,11 +154,20 @@ The drift job runs the plan-side moments, so a hook meant only for drift checks 
 
 ## Run the jobs in your own image
 
-Build your own image `FROM` terragucci's when a hook needs a tool it lacks, and set `image`. terragucci's images are Debian, so tools come from `apt-get`:
+Build your own image `FROM` terragucci's when a hook needs a tool it lacks, and set `image`. terragucci's images come in a Debian set and a Chainguard set (`image.base`, [Run the jobs in a prepared image](/terragucci/guides/run-in-a-prepared-image/#the-two-image-sets)). The Debian set takes tools from `apt-get`:
 
 ```dockerfile
 FROM ghcr.io/intentius/terragucci-tofu:<the tag init names>
 RUN apt-get update && apt-get install -y --no-install-recommends jq
+```
+
+On the Chainguard set, which ends as user 65532, the layer runs as root and installs with apk:
+
+```dockerfile
+FROM ghcr.io/intentius/terragucci-tofu:<the tag init names for image.base: chainguard>
+USER root
+RUN apk add --no-cache jq
+USER 65532
 ```
 
 ```yaml

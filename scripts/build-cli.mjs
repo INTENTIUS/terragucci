@@ -60,6 +60,8 @@ writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
 // The npm target's `pins` reads this file; the publish plan refuses a digest the release did not build.
 if (digests) released(() => writeReleaseImagePins(digests, { out: join(stage, "image-digests.json"), bundles: [join(stage, "terragucci.mjs")] }));
+// A release's build writes the SBOM the npm target attaches; any other build leaves none to ship.
+if (digests) writeSbom();
 
 // The registry edge function (`terragucci registry edge`, terragucci#1287): chant's
 // terraform lexicon function as a Cloudflare Worker and a Lambda@Edge handler,
@@ -174,9 +176,18 @@ function released(step) {
   }
 }
 
-/** Each CI image's reference at `version`, by its name in chant.config.ts's release.images. */
+/**
+ * Each CI image's reference at `version`, by its name in chant.config.ts's release.images: the Debian set
+ * as `tofu` and the Chainguard set as `tofu-chainguard`, in the same repository under a tag that ends in -chainguard.
+ */
 function imageRefs(version) {
-  return Object.fromEntries(Object.entries(imageTags(version)).map(([name, tag]) => [name, `ghcr.io/intentius/terragucci-${name}:${tag}`]));
+  const tags = imageTags(version);
+  const refs = {};
+  for (const [name, tag] of Object.entries(tags)) {
+    refs[name] = `ghcr.io/intentius/terragucci-${name}:${tag}`;
+    refs[`${name}-chainguard`] = `ghcr.io/intentius/terragucci-${name}:${tag}-chainguard`;
+  }
+  return refs;
 }
 
 /** Each CI image's tag at `version`, as imageTag in packages/terragucci/src/images.ts gives it. */
@@ -185,4 +196,16 @@ function imageTags(version) {
   const tool = (k) => new RegExp(`${k}: "([^"]+)"`).exec(src)[1];
   const [tofu, terraform, terragrunt, choudoufu] = ["tofu", "terraform", "terragrunt", "choudoufu"].map(tool);
   return { tofu: `${version}-tofu${tofu}`, terraform: `${version}-tf${terraform}`, terragrunt: `${version}-tg${terragrunt}-tofu${tofu}`, choudoufu: `${version}-choudoufu${choudoufu}` };
+}
+
+/**
+ * The package's SBOM, for the npm target under the supply-chain group (chant's publish refuses a package with none):
+ * SPDX, from the lockfile, of the workspace the package is built in (npm leaves chant out of a production-only list
+ * because the root also lists it as a development dependency, so nothing is omitted). It sits at the package root as
+ * sbom.spdx.json, which package.json's files list names and .gitignore keeps out of the tree. Written by a release's
+ * build alone, as image-digests.json is.
+ */
+function writeSbom() {
+  const text = execFileSync("npm", ["sbom", "--sbom-format", "spdx", "--package-lock-only", "-w", "packages/terragucci"], { cwd: root, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
+  writeFileSync(join(pkg, "sbom.spdx.json"), text);
 }

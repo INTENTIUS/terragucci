@@ -1149,7 +1149,7 @@ terragucci check-mirror [--config <file>] [--platform <os_arch>]
 
 | Command | Does |
 |---|---|
-| `image recipe` | reads every `.terraform.lock.hcl` in the repo and writes, under `--out` (default `image`), a `Dockerfile` `FROM` the terragucci image for the binary (or `--from`), a `terragucci.tfrc` whose only installation method is a `filesystem_mirror`, one module per distinct lock file that requires each provider at its locked version, and `build.sh`, which builds for `--platform` (default `linux/amd64`) and pushes to `$IMAGE`. It builds and pushes nothing itself |
+| `image recipe` | reads every `.terraform.lock.hcl` in the repo and writes, under `--out` (default `image`), a `Dockerfile` `FROM` the terragucci image for the binary in the set `image.base` names (or `--from`), whose steps run as root and which ends as the user that image runs as, a `terragucci.tfrc` whose only installation method is a `filesystem_mirror`, one module per distinct lock file that requires each provider at its locked version, and `build.sh`, which builds for `--platform` (default `linux/amd64`) and pushes to `$IMAGE`. It builds and pushes nothing itself |
 | `check-mirror` | with `image.mirror` set, checks the image's mirror holds every provider each lock file pins, for the job's platform (or `--platform`, such as `linux_arm64`). A gap new at this commit warns; a gap the lock file already had at the commit's first parent fails, naming the provider and the rebuild. Prints nothing without the key |
 
 The generated `tf-check` job runs `check-mirror` before any root's `init` when `image.mirror` is set.

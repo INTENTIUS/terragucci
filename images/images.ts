@@ -1,21 +1,31 @@
 /**
- * terragucci's CI images, one per toolchain (terragucci#19), declared rather than
+ * terragucci's CI images, one per toolchain (terragucci#19) and in two sets, declared rather than
  * hand-written. `just ci` renders each into images/Dockerfile.<name>, and
  * `just ci-check` fails when a rendered file differs from this declaration.
  *
  * chant's productImageStages (chant issue 4784) writes each CI image: a fetch
  * stage that downloads every engine and checks it against its release's
- * checksums file and the sha256 chant records for it (CI_TOOL_SHA256), so curl never reaches the final image; then node:22-bookworm-slim
- * with git and CA certificates, the engines under /opt/terragucci linked onto
+ * checksums file and the sha256 chant records for it (CI_TOOL_SHA256), so curl never reaches the final image; then the
+ * final stage with git and CA certificates, the engines under /opt/terragucci linked onto
  * PATH, chant's wave runtime and the terragucci bundle
  * (packages/terragucci/dist, built by `just build-cli` first). Tool versions
  * come from the package itself, so an image and the pipelines `init` writes
  * for it always agree.
+ *
+ * The two sets differ in their base, which `base` in productImageStages picks:
+ *   Debian (the default, Dockerfile.<name>): node:22-bookworm-slim and debian:bookworm-slim by digest, apt, Node 22,
+ *     and the final user is root.
+ *   Chainguard (Dockerfile.<name>Chainguard, released as <name>-chainguard): cgr.dev/chainguard/node:latest-dev and
+ *     wolfi-base by digest, apk, the Node that Wolfi packages (not 22), and the final user is 65532.
+ * A release builds both sets and records both sets' digests in the bundle; `image.base` in terragucci.yml picks the
+ * set a repo's pipeline runs in. This file declares the Debian set and terragucci-decide, images/chainguard.ts the
+ * Chainguard set, and images/stages.ts what they share. The Chainguard set needs a chant that carries
+ * CI_IMAGE_BASE_FLOOR, and loading chainguard.ts throws on an older one.
  */
-import { CI_IMAGE_LABEL_ARG, productImageStages, type CiImageTool } from "@intentius/chant/ci-image";
+import { CI_IMAGE_LABEL_ARG } from "@intentius/chant/ci-image";
 import { Dockerfile } from "@intentius/chant-lexicon-docker";
-import pkg from "../packages/terragucci/package.json" with { type: "json" };
 import { DECIDE_IMAGE, LAYA_MODEL, TOOL_VERSIONS } from "../packages/terragucci/src/images";
+import { ciStages, ENGINES } from "./stages";
 
 /** The build argument a release passes its label in (chant's release.version): each image's version label reads it. */
 export const RELEASE_LABEL_ARG = CI_IMAGE_LABEL_ARG;
@@ -23,44 +33,15 @@ export const RELEASE_LABEL_ARG = CI_IMAGE_LABEL_ARG;
 /** Python by index digest, for the decide image, so a rebuild cannot change underneath a tag. */
 const PYTHON = "python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3";
 
-/** Each engine with its pinned version, written out so no lookup computes a key. */
-const ENGINES = {
-  tofu: { tool: "tofu", version: TOOL_VERSIONS.tofu },
-  terraform: { tool: "terraform", version: TOOL_VERSIONS.terraform },
-  terragrunt: { tool: "terragrunt", version: TOOL_VERSIONS.terragrunt },
-  choudoufu: { tool: "choudoufu", version: TOOL_VERSIONS.choudoufu },
-} satisfies Record<string, CiImageTool>;
-
-/**
- * The stages of one CI image. Each image binds them to a constant before its
- * Dockerfile, because a resource's properties are read statically (EVL001):
- * the call that computes the stages runs here, and the declaration names the result.
- */
-const ciStages = (name: string, description: string, tools: CiImageTool[]) =>
-  productImageStages({
-    name: `terragucci-${name}`,
-    product: "terragucci",
-    description,
-    source: "https://github.com/INTENTIUS/terragucci",
-    tools,
-    // What the bundle imports at run time from /usr/local/node_modules, which is on its module
-    // path: the installed chant it is built against (the release the package pins, whose core
-    // subpaths the bundle leaves external) and the HCL parser the tips and rollouts read with.
-    npm: [`@intentius/chant@${pkg.dependencies["@intentius/chant"]}`, `@cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]}`],
-    // chant's bin, which a wave job runs (`chant run wave`) and approve and the relay record
-    // through, as the release the package pins.
-    chant: pkg.dependencies["@intentius/chant"],
-    bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
-  });
-
-const tofuStages = ciStages("tofu", `OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`, [ENGINES.tofu]);
-const terraformStages = ciStages("terraform", `Terraform ${TOOL_VERSIONS.terraform} and the terragucci engine`, [ENGINES.terraform]);
+const tofuStages = ciStages("tofu", `OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`, [ENGINES.tofu], "debian");
+const terraformStages = ciStages("terraform", `Terraform ${TOOL_VERSIONS.terraform} and the terragucci engine`, [ENGINES.terraform], "debian");
 const terragruntStages = ciStages(
   "terragrunt",
   `Terragrunt ${TOOL_VERSIONS.terragrunt}, OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`,
   [ENGINES.tofu, ENGINES.terragrunt],
+  "debian",
 );
-const choudoufuStages = ciStages("choudoufu", `choudoufu ${TOOL_VERSIONS.choudoufu} and the terragucci engine`, [ENGINES.choudoufu]);
+const choudoufuStages = ciStages("choudoufu", `choudoufu ${TOOL_VERSIONS.choudoufu} and the terragucci engine`, [ENGINES.choudoufu], "debian");
 
 export const tofu = new Dockerfile({ stages: tofuStages });
 

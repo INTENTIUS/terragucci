@@ -115,6 +115,7 @@
     "estate/override": "Reports and visibility",
     "respond/explain-refusal": "Agents and pull request environments",
     "init/foreign-checkout": "Setup and runtime",
+    "init/chainguard-job": "Setup and runtime",
     "oidc/forgejo": "Setup and runtime",
     "oidc/audience-stages": "Setup and runtime",
     "apply/check-job": "Locks and safety",

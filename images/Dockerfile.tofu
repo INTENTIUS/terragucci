@@ -10,8 +10,8 @@ ENV NODE_DISABLE_COMPILE_CACHE=1
 ENV npm_config_logs_max=0
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/ldconfig/aux-cache
 RUN git config --system --add safe.directory '*'
-RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @intentius/chant@0.124.112 @cdktn/hcl2json@0.24.0 && npm cache clean --force && rm -rf /tmp/.npm
-RUN cd /tmp && npm pack --silent @intentius/chant@0.124.112 && tar -xzf intentius-chant-0.124.112.tgz package/dist/wave-runtime.mjs && install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs && printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant && rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force && rm -rf /tmp/.npm
+RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @intentius/chant@0.124.114 @cdktn/hcl2json@0.24.0 && npm cache clean --force && rm -rf /tmp/.npm
+RUN cd /tmp && npm pack --silent @intentius/chant@0.124.114 && tar -xzf intentius-chant-0.124.114.tgz package/dist/wave-runtime.mjs && install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs && printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant && rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force && rm -rf /tmp/.npm
 COPY --from=fetch /opt/terragucci/ /opt/terragucci/
 RUN ln -sf /opt/terragucci/tofu-1.13.1/tofu /usr/local/bin/tofu
 COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci
@@ -20,4 +20,7 @@ LABEL org.opencontainers.image.description="OpenTofu 1.13.1 and the terragucci e
 LABEL org.opencontainers.image.version="${CHANT_RELEASE_LABEL}"
 LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.base.name="node:22-bookworm-slim"
+LABEL org.opencontainers.image.base.digest="sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392"
+LABEL io.intentius.chant.image.base="debian"
 CMD ["bash"]

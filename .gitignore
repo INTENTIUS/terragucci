@@ -6,6 +6,7 @@ dist/
 docs-site/dist/
 docs-site/.astro/
 packages/terragucci/dist/
+packages/terragucci/sbom.spdx.json
 
 # Tarballs and the commit from `just chant-local`.
 .chant-local/

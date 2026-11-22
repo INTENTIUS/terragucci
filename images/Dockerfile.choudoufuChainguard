@@ -1,0 +1,31 @@
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:be019c1c74fe69204a42c4e10bc4d886a49bf5403ffa74374ef7baa408fc9a26 AS fetch
+ARG TARGETARCH
+RUN apk add --no-cache ca-certificates=20261020-r0 curl=8.23.0-r4 unzip=6.0-r9 || { echo "apk add failed. If Wolfi no longer serves a pinned version, move the pin: a newer chant moves its own (WOLFI_PACKAGE_PINS), and chant release images --repin <file> moves an apk:<name>=<version> entry in your source; then render this Dockerfile again." >&2; exit 1; }
+RUN set -e; a="$TARGETARCH" && case "$a" in (amd64) w=amd64 ;; (arm64) w=arm64 ;; (*) echo "choudoufu 0.31.0: chant fetches it for amd64 and arm64, not $a" >&2; exit 1 ;; esac && f="choudoufu_v0.31.0_linux_$w.tar.gz" && t="$(mktemp -d)" && curl -fsSLo "$t/$f" "https://github.com/INTENTIUS/choudoufu/releases/download/v0.31.0/$f" && case "$a" in (amd64) want=1f38e5840b2e8c82e13a90652a9ffd75d5fbdff691f3f1a0ecee33fb8e4fae5b ;; (arm64) want=00c9dc5c0a4260bae577bce081bc7fb7f2cc9f56757de2da4b3bdb4afaff3586 ;; (*) want= ;; esac && curl -fsSLo "$t/sums" "https://github.com/INTENTIUS/choudoufu/releases/download/v0.31.0/SHA256SUMS" && line="$(sed -n "s#^\([0-9a-f]\{64\}\)  *[*.]*/*$f\$#\1#p" "$t/sums")" && { [ -n "$line" ] || { echo "choudoufu 0.31.0: $f is not in SHA256SUMS" >&2; exit 1; }; } && { [ -z "$want" ] || [ "$line" = "$want" ] || { echo "choudoufu 0.31.0: SHA256SUMS lists $line for $f; chant records $want" >&2; exit 1; }; } && want="$line" && echo "$want  $t/$f" | sha256sum -c - >/dev/null && mkdir -p "/opt/terragucci/choudoufu-0.31.0" && tar -xzf "$t/$f" -C "$t" "choudoufu" && install -m 0755 "$t/choudoufu" "/opt/terragucci/choudoufu-0.31.0/choudoufu"
+FROM cgr.dev/chainguard/node:latest-dev@sha256:cd993dc8ec644f8f35e8356f6b442e807cdc5e42f303da5ce19a55d7cf660b51
+USER root
+ARG CHANT_RELEASE_LABEL
+ENV USER=terragucci
+ENV HOME=/tmp
+ENV NODE_DISABLE_COMPILE_CACHE=1
+ENV npm_config_logs_max=0
+ENV CHANT_IMAGE_USER=65532
+RUN apk add --no-cache git=2.56.1-r1 ca-certificates=20261020-r0 || { echo "apk add failed. If Wolfi no longer serves a pinned version, move the pin: a newer chant moves its own (WOLFI_PACKAGE_PINS), and chant release images --repin <file> moves an apk:<name>=<version> entry in your source; then render this Dockerfile again." >&2; exit 1; } && mkdir -p /usr/local/bin
+RUN git config --system --add safe.directory '*'
+RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @intentius/chant@0.124.114 @cdktn/hcl2json@0.24.0 && npm cache clean --force && rm -rf /tmp/.npm
+RUN cd /tmp && npm pack --silent @intentius/chant@0.124.114 && tar -xzf intentius-chant-0.124.114.tgz package/dist/wave-runtime.mjs && install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs && printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant && rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force && rm -rf /tmp/.npm
+COPY --from=fetch /opt/terragucci/ /opt/terragucci/
+RUN ln -sf /opt/terragucci/choudoufu-0.31.0/choudoufu /usr/local/bin/choudoufu
+RUN mkdir -p /opt/terragucci && chown 65532:65532 /opt/terragucci
+COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci
+LABEL org.opencontainers.image.title="terragucci-choudoufu"
+LABEL org.opencontainers.image.description="choudoufu 0.31.0 and the terragucci engine, on Chainguard images"
+LABEL org.opencontainers.image.version="${CHANT_RELEASE_LABEL}"
+LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.base.name="cgr.dev/chainguard/node:latest-dev"
+LABEL org.opencontainers.image.base.digest="sha256:cd993dc8ec644f8f35e8356f6b442e807cdc5e42f303da5ce19a55d7cf660b51"
+LABEL io.intentius.chant.image.base="chainguard"
+ENTRYPOINT []
+CMD ["bash"]
+USER 65532

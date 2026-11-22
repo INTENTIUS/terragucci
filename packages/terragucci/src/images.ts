@@ -1,10 +1,12 @@
 /**
- * The CI images terragucci publishes (terragucci#19), one per toolchain. Each
+ * The CI images terragucci publishes (terragucci#19), one per toolchain and
+ * built on two bases: Debian (the default) and Chainguard's Wolfi images. Each
  * carries one tool at a fixed version plus the terragucci bundle. A pipeline
  * runs in the image for its binary, pinned by digest once the image is
  * published; a repo that pins another version installs it in the job with
- * `terragucci install`.
+ * `terragucci install`. `image.base` in terragucci.yml picks the set.
  */
+import * as chantCiImage from "@intentius/chant/ci-image";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../package.json";
 import type { Binary } from "./config";
@@ -18,8 +20,38 @@ import type { Binary } from "./config";
 declare const __TERRAGUCCI_IMAGE_DIGESTS__: Record<string, string> | undefined;
 const digests: Record<string, string> = typeof __TERRAGUCCI_IMAGE_DIGESTS__ !== "undefined" ? __TERRAGUCCI_IMAGE_DIGESTS__ : {};
 
-/** The four CI images a release builds and publishes, by name. */
+/** The four CI images a release builds and publishes in each set, by name. */
 export const ciImages = ["tofu", "terraform", "terragrunt", "choudoufu"] as const;
+
+/** The base a set of the CI images is built on. `debian` is the default. */
+export type ImageBase = "debian" | "chainguard";
+
+/** The two sets a release builds and publishes. */
+export const IMAGE_BASES = ["debian", "chainguard"] as const;
+
+/**
+ * The first chant release whose image helper takes `base` (`CI_IMAGE_BASE_FLOOR` in `@intentius/chant/ci-image`).
+ * images/images.ts builds the Chainguard set only on a chant that carries it. It is the chant package.json pins
+ * once the pin has moved there (test/images.test.ts keeps the two in step), and it is written out here for the
+ * same reason as CHANT_PIN in ./comment-allow.
+ */
+export const CI_IMAGE_BASE_CHANT_FLOOR = "0.124.114";
+
+/**
+ * Whether the installed chant takes `base` in productImageStages (it exports CI_IMAGE_BASE_FLOOR). An older chant
+ * ignores the field and would write the Debian image under the Chainguard name, so images/stages.ts refuses there.
+ */
+export function chantTakesImageBase(chant: object = chantCiImage): boolean {
+  return Reflect.has(chant, "CI_IMAGE_BASE_FLOOR");
+}
+
+/** The suffix a Chainguard image's tag and release name carry: `tofu` is the Debian image, `tofu-chainguard` the other. */
+export const CHAINGUARD_SUFFIX = "-chainguard";
+
+/** The name a release gives an image in a set: `tofu` on Debian, `tofu-chainguard` on Chainguard. */
+export function releaseImageName(name: (typeof ciImages)[number], base: ImageBase = "debian"): string {
+  return base === "chainguard" ? `${name}${CHAINGUARD_SUFFIX}` : name;
+}
 
 export const REGISTRY = "ghcr.io/intentius";
 
@@ -44,23 +76,39 @@ export interface ImageRef {
   digest?: string;
 }
 
-export function imageTag(tool: keyof typeof TOOL_VERSIONS, version = VERSION): string {
-  if (tool === "terragrunt") return `${version}-tg${TOOL_VERSIONS.terragrunt}-tofu${TOOL_VERSIONS.tofu}`;
-  return `${version}-${tool === "terraform" ? "tf" : tool}${TOOL_VERSIONS[tool]}`;
+/**
+ * An image's tag. The Chainguard set shares each repository with the Debian set and ends its tags in `-chainguard`,
+ * so a tag names its set.
+ */
+export function imageTag(tool: keyof typeof TOOL_VERSIONS, version = VERSION, base: ImageBase = "debian"): string {
+  const suffix = base === "chainguard" ? CHAINGUARD_SUFFIX : "";
+  if (tool === "terragrunt") return `${version}-tg${TOOL_VERSIONS.terragrunt}-tofu${TOOL_VERSIONS.tofu}${suffix}`;
+  return `${version}-${tool === "terraform" ? "tf" : tool}${TOOL_VERSIONS[tool]}${suffix}`;
 }
 
-/** The image a pipeline for `binary` runs in. */
-export function imageFor(binary: Binary, table: Record<string, string> = digests): ImageRef {
+/** The image a pipeline for `binary` runs in, from the `base` set. */
+export function imageFor(binary: Binary, table: Record<string, string> = digests, base: ImageBase = "debian"): ImageRef {
   const repository = `${REGISTRY}/terragucci-${binary}`;
-  const tag = imageTag(binary);
+  const tag = imageTag(binary, VERSION, base);
   return { repository, tag, digest: table[`${repository}:${tag}`] };
 }
 
 /** The image a Terragrunt repo's pipeline runs in: Terragrunt and OpenTofu. */
-export function terragruntImage(table: Record<string, string> = digests): ImageRef {
+export function terragruntImage(table: Record<string, string> = digests, base: ImageBase = "debian"): ImageRef {
   const repository = `${REGISTRY}/terragucci-terragrunt`;
-  const tag = imageTag("terragrunt");
+  const tag = imageTag("terragrunt", VERSION, base);
   return { repository, tag, digest: table[`${repository}:${tag}`] };
+}
+
+/**
+ * Whether this build can name a Chainguard image. A release's build carries the digest of each image the release
+ * published, in both sets, and a table with none of the Chainguard set's belongs to a release that published
+ * Debian images alone. A build with no table at all (a checkout, the tests) names images by tag, as it does for
+ * Debian, and is not refused.
+ */
+export function carriesBase(base: ImageBase, table: Record<string, string> = digests): boolean {
+  if (base === "debian" || Object.keys(table).length === 0) return true;
+  return Object.keys(table).some((reference) => reference.endsWith(CHAINGUARD_SUFFIX));
 }
 
 /** How a pipeline names the image: by digest when it is known, with the tag kept beside it. */

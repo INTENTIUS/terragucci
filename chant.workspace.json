@@ -1,7 +1,8 @@
 {
   "name": "terragucci",
   "schema": 1,
-  "minReader": "0.108.0",
+  "minReader": "0.124.33",
+  "security": ["supply-chain"],
   "members": [],
   "ci": {
     "green": {

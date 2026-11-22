@@ -37,6 +37,8 @@ const NOT_VARIABLES = new Set([
   "CI_PRODUCT_FLOOR", "CI_CONTROL_FLOOR", "TERRAGUCCI_WORDS", "CI_ESTATE_FLOOR", "CI_POLICY_SOURCE_FLOOR", "OP_WAVE_STAND_DOWN_FLOOR",
   // chant's floor for the agent job (chant#4616).
   "CI_AGENT_FLOOR",
+  // chant's floor for the image helper's `base` (chant#5445), and the release terragucci writes it down as.
+  "CI_IMAGE_BASE_FLOOR", "CI_IMAGE_BASE_CHANT_FLOOR",
   // terragucci's words for chant's review product (chant#4811).
   "TG_REVIEW_WORDS",
   // chant's GitLab role words, which the comment jobs compare (chant#4785).
