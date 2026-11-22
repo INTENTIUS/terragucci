@@ -589,7 +589,7 @@ With `--render-spec`, chant reads the spec that [`waves-spec`](#waves-spec) prin
 ## waves-spec
 
 ```text
-terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]
+terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>] [--own-run-jobs <name,...>]
 ```
 
 | Flag | Environment | Meaning |
@@ -597,12 +597,15 @@ terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]
 | `--at` | `CHANT_WAVES_SPEC_AT` | the commit to read the spec at; default `HEAD` |
 | `--spec` | `CHANT_WAVES_SPEC_FILE` | the spec file; default `.chant/op-waves/tf-apply.spec.json` |
 | `--config` | | the config file, when it is not at the repo root |
+| `--own-run-jobs` | | the jobs of the wave's own run that the merge's release cut counts, comma-separated; the workflow `init` writes names them |
 
 Prints the `tf-apply` Op waves spec at a commit, which chant's wave jobs read their rules from. Everything in it comes from that commit, never from the working tree. The waves, their roots, shares and job groups are the spec file `init` commits there. The rules are `terragucci.yml` there:
 
 - each wave's gate, the stricter of the spec's and the top-level `gate`, or with `environments` the strictest of its roots';
 - the approval mode, `approval_rules` and the agent's account;
 - `apply.point`, `apply.branches` (the job's branch applies only its roots), `apply.resume` and `notify`.
+
+With `promotion`, the last wave cuts the release after its apply, inside the run that applied it. Under `release.green: forge-checks` that cut counts the merge commit's checks from other workflows and the jobs `--own-run-jobs` names: the workflow `init` writes names the `check` job and every wave job the last wave waits for, each of which must have passed.
 
 Each root's workspace and Atmos reads come from the checkout. Wave 1 always carries the state migration hooks, which find no migration and do nothing when the change has none. The spec carries chant's spend rules (`approvals.spend`, `remainder` and `spendStanding`), so the rest of a stopped apply applies under its approval at the same commit.
 

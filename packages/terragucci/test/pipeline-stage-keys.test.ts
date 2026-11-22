@@ -124,9 +124,41 @@ describe("the release cut on the merge path", () => {
   it("cuts a release after the last wave's apply when promotion is set, and wave 1 keeps its migration hooks", async () => {
     const spec = await specOf(settings(), PROMOTED);
     const last = spec.waves.at(-1)!;
-    expect(last.hooks?.after?.apply).toEqual([{ name: "release-cut", command: ["terragucci", "release", "cut", "auto", "--yes", "--wait-checks"] }]);
+    // chant adds --first to an auto label (terragucci#1526), so the line is read around it.
+    expect(last.hooks?.after?.apply?.map((h) => h.name)).toEqual(["release-cut"]);
+    const line = last.hooks!.after!.apply![0]!.command;
+    expect(line.slice(0, 4)).toEqual(["terragucci", "release", "cut", "auto"]);
+    expect(line.slice(-2)).toEqual(["--yes", "--wait-checks"]);
     expect(spec.waves[0]!.hooks?.before?.plan?.map((h) => h.name)).toEqual(["migrations", "migration gate"]);
     expect(spec.waves[0]!.hooks?.after?.apply).toBeUndefined();
+  });
+
+  // terragucci#1531: the cut runs inside the run that applies, so under forge-checks it counts the jobs that run finished first.
+  it("counts the jobs its own run depended on, named in the waves-spec command each wave job renders with", async () => {
+    const spec = (await specOf(settings(), PROMOTED)).waves.at(-1)!.hooks?.after?.apply;
+    const dir = repo({ [WAVES_SPEC]: shape(layers) });
+    pipelineCommand(dir, settings(), { log: () => {} });
+    commit(dir, { "terragucci.yml": PROMOTED });
+    const own = (await wavesSpecAt(dir, { at: "HEAD", env: {}, ownRunJobs: ["check", "apply-wave-1"] }))!.waves.at(-1)!.hooks?.after?.apply;
+    const cut = own?.find((h) => h.name === "release-cut")!.command;
+    expect(cut?.slice(-2)).toEqual(["--own-run-jobs", "check,apply-wave-1"]);
+    expect(cut?.slice(0, -2)).toEqual(spec?.find((h) => h.name === "release-cut")!.command);
+  });
+
+  it.each(["github", "forgejo", "gitlab"] as const)("names on %s the check and every wave before the last, by the ids the forge reports them under", (forge) => {
+    const render = (releaseCut: boolean) => renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["envs/dev/net"], ["envs/dev/app"], ["envs/dev/web"]], env: {}, ...(releaseCut ? { releaseCut } : {}) }).content;
+    const commands = (text: string) => [...new Set([...text.matchAll(/CHANT_WAVES_SPEC_COMMAND: '(.*)'/g)].map((m) => m[1]!))].map((c) => JSON.parse(c) as string[]);
+    const named = commands(render(true));
+    expect(named.map((c) => c.slice(0, 3))).toEqual([["terragucci", "waves-spec", "--own-run-jobs"]]);
+    expect(named[0]![3]!.split(",").sort()).toEqual(["apply-wave-1", "apply-wave-2", "check"]);
+    expect(commands(render(false))).toEqual([["terragucci", "waves-spec"]]);
+    // A job with a display name reports under that name; these carry none, so each reports under the id named here.
+    const doc = parseYAML(render(true).split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+    const jobs = forge === "gitlab" ? doc : doc.jobs;
+    for (const id of ["check", "apply-wave-1", "apply-wave-2"]) {
+      expect(jobs[id]).toBeDefined();
+      expect(jobs[id].name).toBeUndefined();
+    }
   });
 
   it("cuts nothing with release.cut: false", async () => {

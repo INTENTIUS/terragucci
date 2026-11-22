@@ -386,17 +386,19 @@ export function joinHooks(first: OpWaveHooks | undefined, then: OpWaveHooks | un
  * The rules the merge path's waves take from the pipeline committed at
  * `sha`, folded by chant (`readPipelineAt`) and cut to its first stage by
  * chant's `stageWavesSpec`, so the spec terragucci renders carries the folded
- * one's holds, replan and soak. Undefined when the commit has no pipeline.
+ * one's holds, replan and soak. `ownRunJobs` are the jobs of the run the
+ * release cut counts, which the workflow names (`waves-spec --own-run-jobs`). Undefined when the commit has no pipeline.
  * Throws when the committed pipeline does not fold, so the wave fails
  * rather than run without its rules.
  */
-export function firstStageRules(repo: string, sha: string): FirstStageRules | undefined {
+export function firstStageRules(repo: string, sha: string, ownRunJobs: readonly string[] = []): FirstStageRules | undefined {
   const read = readPipelineAt(sha, repo);
   if (read.status === "absent") return undefined;
   if (read.status === "refused") throw new ConfigError(`the waves' rules are read from ${PIPELINE_FILE} at ${sha.slice(0, 12)}, and it does not fold: ${read.line}`);
   const first = read.spec.stages[0];
   if (!first) return undefined;
-  const stage = stageWavesSpec(read.spec, first.name);
+  // terragucci#1531: the release cut counts the jobs of its own run that the wave depended on (`--own-run-jobs`).
+  const stage = stageWavesSpec(read.spec, first.name, ownRunJobs.length > 0 ? { ownRunJobs } : {});
   const canary = stage.waves[0]?.canary === true ? stage.waves[0].soak : undefined;
   // chant#5324: the merge applies the first stage and cuts a release, which each later stage promotes.
   const releaseHooks = structuredClone(stage.waves.at(-1)?.hooks?.after?.apply ?? []);

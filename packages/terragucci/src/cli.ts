@@ -30,7 +30,7 @@
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]]   (one job of chant's Op waves pipeline, terragucci's hooks in process)
- *   terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   (the tf-apply spec at a commit, which chant's renderSpec runs)
+ *   terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>] [--own-run-jobs <name,...>]   (the tf-apply spec at a commit, which chant's renderSpec runs)
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci ci [--check]   (write .chant/pipeline.ts from promotion, environments and waves in terragucci.yml; --check fails when the committed file is stale)
@@ -227,7 +227,7 @@ const USAGE = `usage:
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
   terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]]   one job of chant's Op waves pipeline, with terragucci's hooks in this process; chant's other run wave lines pass through
-  terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   print the tf-apply spec at a commit (default CHANT_WAVES_SPEC_AT, else HEAD), or nothing when the commit has none
+  terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>] [--own-run-jobs <name,...>]   print the tf-apply spec at a commit (default CHANT_WAVES_SPEC_AT, else HEAD), or nothing when the commit has none
   terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   the templates in the release catalog, with the versions a request may name and their form fields; read only
   terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   the apps made from templates, with their versions, add-ons and actions; read only
   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template, or with --app an add-on to that app
@@ -1381,7 +1381,9 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "waves-spec": {
         // chant's wave jobs (renderSpec, chant issue 4982) run this with CHANT_WAVES_SPEC_AT set, and read the tf-apply spec at that commit from what it prints.
-        return printWavesSpec(cwd, { ...(str(flags, "at") ? { at: str(flags, "at") } : {}), ...(str(flags, "spec") ? { specFile: str(flags, "spec") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}) });
+        // --own-run-jobs names the jobs of the run the release cut counts (terragucci#1531), which the workflow wrote in.
+        const own = (str(flags, "own-run-jobs") ?? "").split(",").map((j) => j.trim()).filter(Boolean);
+        return printWavesSpec(cwd, { ...(str(flags, "at") ? { at: str(flags, "at") } : {}), ...(str(flags, "spec") ? { specFile: str(flags, "spec") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(own.length ? { ownRunJobs: own } : {}) });
       }
       case "run": {
         // chant's Op waves jobs run `terragucci run wave ...`: chant's wave runner in this process, with terragucci's words and its wave hook.

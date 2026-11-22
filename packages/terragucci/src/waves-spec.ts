@@ -92,6 +92,8 @@ export interface WavesSpecAtOptions {
   specFile?: string;
   /** The config file, as `--config` names it. */
   config?: string;
+  /** The jobs of the run the release cut counts (`--own-run-jobs`, terragucci#1531), as the workflow names them. */
+  ownRunJobs?: readonly string[];
   env?: NodeJS.ProcessEnv;
   /** The forge call that finds the agent's login from `agent.token_env`. Tests pass one. */
   fetch?: Fetch;
@@ -223,7 +225,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
   // The folded pipeline's first stage at base (./pipeline.ts firstStageRules), else risk and replan_dependents at base:
   // the stage's risk hold, its replanDependents, the canary's soak and the failure tolerance. Risk only adds approvals:
   // it sets no gate and never reads allow_unattended, so a low score lets no wave through that would wait without it.
-  const staged = firstStageRules(repo, sha) ?? topLevelRules(settings);
+  const staged = firstStageRules(repo, sha, o.ownRunJobs) ?? topLevelRules(settings);
   const cutsRelease = !onBranchRoute && (staged.releaseHooks?.length ?? 0) > 0;
   const hook = (name: string, what: "migrate-check" | "migrate" | "gate", onFailure?: "approve"): OpWaveHook => ({ name, command: waveCallArgv(what, "{runs}"), ...(onFailure ? { onFailure } : {}) });
   const terragrunt = (shape.step as { kind?: string } | undefined)?.kind === "terragrunt-apply";
@@ -305,7 +307,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
  * are what the change from that commit reaches. stdout
  * carries the spec alone: every line the render logs goes to stderr.
  */
-export async function printWavesSpec(repo: string, o: { at?: string; base?: string; specFile?: string; config?: string; env?: NodeJS.ProcessEnv; fetch?: Fetch; out?: (text: string) => void }): Promise<number> {
+export async function printWavesSpec(repo: string, o: { at?: string; base?: string; specFile?: string; config?: string; ownRunJobs?: readonly string[]; env?: NodeJS.ProcessEnv; fetch?: Fetch; out?: (text: string) => void }): Promise<number> {
   const env = o.env ?? process.env;
   const at = o.at ?? env[SPEC_AT_ENV] ?? "HEAD";
   const base = o.base ?? (env[SPEC_BASE_ENV] || undefined);
@@ -314,7 +316,7 @@ export async function printWavesSpec(repo: string, o: { at?: string; base?: stri
   console.log = (...args: unknown[]) => console.error(...args);
   let spec: OpWavesSpec | undefined;
   try {
-    spec = await wavesSpecAt(repo, { at, specFile, ...(base ? { base } : {}), ...(o.config ? { config: o.config } : {}), env, ...(o.fetch ? { fetch: o.fetch } : {}) });
+    spec = await wavesSpecAt(repo, { at, specFile, ...(base ? { base } : {}), ...(o.config ? { config: o.config } : {}), ...(o.ownRunJobs?.length ? { ownRunJobs: o.ownRunJobs } : {}), env, ...(o.fetch ? { fetch: o.fetch } : {}) });
   } finally {
     console.log = said;
   }

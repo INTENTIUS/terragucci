@@ -26,6 +26,7 @@ import { cloudLogin, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import type { CloudTradeSpec } from "@intentius/chant/ci-identity";
 import type { PipelineEvidence } from "@intentius/chant/ci-evidence-jobs";
 import type { WaveSummarySpec } from "@intentius/chant/ci-product";
+import { releaseCutOwnRunJobs } from "@intentius/chant/pipeline/stages";
 import { parseYAML } from "@intentius/chant/yaml";
 import { WAVES_OP, WAVES_SPEC } from "./chant-waves";
 import { TERRAGUCCI_WORDS } from "./ci-words";
@@ -55,6 +56,35 @@ const ARTIFACT_NAMES = {
   checks: "terragucci-checks-{job}",
   earlier: "terragucci-report-apply-wave-*",
 };
+
+/** The jobs of terragucci's own workflow the first wave waits for: the check, which runs before the waves in the same run. */
+const FIRST_WAVE_NEEDS = ["check"];
+
+/**
+ * The command each wave job renders its spec with (`renderSpec`), and with
+ * the merge's release cut, the jobs of the run it counts (terragucci#1531):
+ * `terragucci waves-spec --own-run-jobs <name,...>` puts them on the
+ * release-cut hook as chant's `--own-run-jobs`.
+ */
+export function wavesSpecCommand(ownRunJobs: readonly string[] = []): string[] {
+  return ["terragucci", "waves-spec", ...(ownRunJobs.length > 0 ? ["--own-run-jobs", ownRunJobs.join(",")] : [])];
+}
+
+/**
+ * Builds the waves with `build`, and when the merge cuts a release, again
+ * with the jobs its cut counts on the render command: the check and every
+ * job the last wave's jobs depend on, as the generator named them (chant's
+ * `releaseCutOwnRunJobs`). The cut runs inside the run that applies, so
+ * under `release.green: forge-checks` these are the checks the merge
+ * commit has, and none of them carries a display name, so the forge
+ * reports each under the name here.
+ */
+function withOwnRunJobs<T extends { jobs: unknown }>(releaseCut: boolean | undefined, build: (command: string[]) => T): T {
+  const built = build(wavesSpecCommand());
+  if (!releaseCut) return built;
+  const own = releaseCutOwnRunJobs(built.jobs as never, FIRST_WAVE_NEEDS);
+  return own.length > 0 ? build(wavesSpecCommand(own)) : built;
+}
 
 /** A job the generator names, as `OpWavesJobRef` gives it. */
 interface JobRef {
@@ -296,7 +326,7 @@ function commonOptions(input: WavesInput, spec: { waves: unknown[] }, pipeline: 
     // terragucci-dependents.yml, as the control repo's pipeline (./control-repo.ts) listens for them.
     words: TERRAGUCCI_WORDS,
     image: input.image,
-    renderSpec: { command: ["terragucci", "waves-spec"], runsAtHead: true },
+    renderSpec: { command: wavesSpecCommand(), runsAtHead: true },
     ...pipeline,
     applyStatus: { context: APPLY_STATUS },
     ...(input.evidence ? { evidence: input.evidence } : {}),
@@ -343,13 +373,16 @@ export function githubWaves(input: WavesInput & { forge: "github" | "forgejo" },
     // Before merge a push runs the confirm job alone, and the waves run on a decided head's dispatch.
     runIf: input.beforeMerge ? "false" : refs.length > 1 ? `(${refs.join(" || ")})` : refs[0]!,
     dispatchInputs: WAVES_DISPATCH_INPUTS,
-    firstWaveNeeds: ["check"],
+    firstWaveNeeds: FIRST_WAVE_NEEDS,
     // The responses post on the pull request, and review.agent's verdict is read from its run.
     // The release cut's forge-checks gate reads the merge commit's check runs, statuses and workflow runs.
     commandToken: { permissions: { "pull-requests": "write", ...(input.review || (input.releaseCut && input.forge === "github") ? { actions: "read" } : {}), ...(input.releaseCut && input.forge === "github" ? { checks: "read", statuses: "read" } : {}) } },
     ...(input.control ? { controlGroup: "terragucci-control-${{ github.repository }}-{commit}" } : {}),
   };
-  const built = input.forge === "github" ? buildGithubOpWavesDoc(spec as never, options as never) : buildForgejoOpWavesDoc(spec as never, options as never);
+  const built = withOwnRunJobs(input.releaseCut, (command) => {
+    const o = { ...options, renderSpec: { command, runsAtHead: true } };
+    return input.forge === "github" ? buildGithubOpWavesDoc(spec as never, o as never) : buildForgejoOpWavesDoc(spec as never, o as never);
+  });
   const doc = built.doc as unknown as { jobsDoc: Record<string, Record<string, unknown>>; on?: { workflow_dispatch?: { inputs?: Record<string, unknown> } } };
   const resume = built.resumeDoc as unknown as { jobsDoc: Record<string, Record<string, unknown>> } | undefined;
   const asJobs = (jobs: Record<string, Record<string, unknown>>): Array<[string, Record<string, unknown>]> => Object.entries(jobs).map(([n, j]) => [n, withContainer(j)]);
@@ -409,8 +442,10 @@ export function gitlabWaves(input: WavesInput & { forge: "gitlab"; tokenEnv?: st
   // Before merge the split plan and applying jobs drop chant's token names; a project token by another name goes too.
   const tokenUnset = bm && input.tokenEnv && input.tokenEnv !== "GITLAB_TOKEN" ? [`unset ${input.tokenEnv}`] : [];
   const common = commonOptions({ ...input, prelude: [...tokenUnset, ...input.prelude] }, spec as { waves: unknown[] }, pipeline);
-  const gen = generateGitlabOpWavesPipeline(spec as never, {
+  // The check runs in the check stage, before the apply stage's waves, so the release cut counts it as on GitHub.
+  const gen = withOwnRunJobs(input.releaseCut, (command) => generateGitlabOpWavesPipeline(spec as never, {
     ...common,
+    renderSpec: { command, runsAtHead: true },
     opsFileName: ".gitlab/terragucci.yml",
     // The waves in terragucci's apply stage, the resume in its resume stage, the control dispatch in its control stage.
     stageNames: (s: { role: string }) => (s.role === "resume" ? "resume" : s.role === "control" ? "control" : "apply"),
@@ -418,7 +453,7 @@ export function gitlabWaves(input: WavesInput & { forge: "gitlab"; tokenEnv?: st
     ...(input.cache !== undefined ? { cache: input.cache } : {}),
     ...(input.control ? { controlGroup: "terragucci-control" } : {}),
     ...(input.resume ? { resumeGroup: "terragucci-resume" } : {}),
-  } as never) as unknown as { files: { yaml: string }[] };
+  } as never) as unknown as { files: { yaml: string }[]; jobs: unknown });
   const doc = parseYAML(gen.files[0]!.yaml) as Record<string, unknown>;
   const stages = Array.isArray(doc.stages) ? (doc.stages as string[]) : [];
   // The project token under chant's name, in the waves' jobs alone: the plan jobs never see it.

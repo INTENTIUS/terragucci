@@ -43,7 +43,7 @@ A release holds the files of one commit for each environment. It moves through t
 
    From then on, each merge applies dev and then cuts a release of the merge commit, labelled with the next version; the apply job's log names it.
 
-   `chant.config.ts` also sets `release: { green: "forge-checks" }`. The cut's green gate is then the merge commit's checks on the forge: it waits while they run and cuts once they pass, reading them with the apply job's forge token, so the repository needs no `ci/green` tag. On GitHub the apply jobs get read access to checks, statuses and actions for it. When `chant.config.ts` is the repo's own, `init` names the line to add. Steps 2 and 3 are for `release: { cut: false }`, or a release of another commit.
+   `chant.config.ts` also sets `release: { green: "forge-checks" }`. The cut's green gate is then the merge commit's checks on the forge, among them the `check` job and the earlier wave jobs of the run that applies: it waits while they run and cuts once they pass, reading them with the apply job's forge token, so the repository needs no `ci/green` tag. On GitHub the apply jobs get read access to checks, statuses and actions for it. When `chant.config.ts` is the repo's own, `init` names the line to add. Steps 2 and 3 are for `release: { cut: false }`, or a release of another commit.
 
 2. Cut a release from a commit of the default branch whose checks passed, in a clean checkout of that commit:
 
