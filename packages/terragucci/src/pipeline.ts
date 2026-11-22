@@ -383,6 +383,17 @@ export function joinHooks(first: OpWaveHooks | undefined, then: OpWaveHooks | un
 }
 
 /**
+ * Whether the run is a follow-on: it carries a commit (`CHANT_WAVES_COMMIT`), or
+ * its wave (`CHANT_WAVES_WAVE`) is past the stage's last. The same rule as
+ * chant's `renderedInFollowOn` (`chant pipeline spec`), which the package does not export.
+ */
+export function renderedInFollowOn(lastWave: number, env: Record<string, string | undefined> = process.env): boolean {
+  const wave = env.CHANT_WAVES_WAVE?.trim();
+  const commit = env.CHANT_WAVES_COMMIT?.trim();
+  return Boolean(commit) || (Boolean(wave) && Number(wave) > lastWave);
+}
+
+/**
  * The rules the merge path's waves take from the pipeline committed at
  * `sha`, folded by chant (`readPipelineAt`) and cut to its first stage by
  * chant's `stageWavesSpec`, so the spec terragucci renders carries the folded
@@ -391,14 +402,16 @@ export function joinHooks(first: OpWaveHooks | undefined, then: OpWaveHooks | un
  * Throws when the committed pipeline does not fold, so the wave fails
  * rather than run without its rules.
  */
-export function firstStageRules(repo: string, sha: string, ownRunJobs: readonly string[] = []): FirstStageRules | undefined {
+export function firstStageRules(repo: string, sha: string, ownRunJobs: readonly string[] = [], env: Record<string, string | undefined> = process.env): FirstStageRules | undefined {
   const read = readPipelineAt(sha, repo);
   if (read.status === "absent") return undefined;
   if (read.status === "refused") throw new ConfigError(`the waves' rules are read from ${PIPELINE_FILE} at ${sha.slice(0, 12)}, and it does not fold: ${read.line}`);
   const first = read.spec.stages[0];
   if (!first) return undefined;
   // terragucci#1531: the release cut counts the jobs of its own run that the wave depended on (`--own-run-jobs`).
-  const stage = stageWavesSpec(read.spec, first.name, ownRunJobs.length > 0 ? { ownRunJobs } : {});
+  let stage = stageWavesSpec(read.spec, first.name, ownRunJobs.length > 0 ? { ownRunJobs } : {});
+  // A follow-on or resumed run has none of the first run's jobs: its cut names no own-run jobs, and needs a check from another workflow.
+  if (ownRunJobs.length > 0 && renderedInFollowOn(stage.waves.length, env)) stage = stageWavesSpec(read.spec, first.name);
   const canary = stage.waves[0]?.canary === true ? stage.waves[0].soak : undefined;
   // chant#5324: the merge applies the first stage and cuts a release, which each later stage promotes.
   const releaseHooks = structuredClone(stage.waves.at(-1)?.hooks?.after?.apply ?? []);

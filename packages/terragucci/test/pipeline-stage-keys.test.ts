@@ -145,6 +145,20 @@ describe("the release cut on the merge path", () => {
     expect(cut?.slice(0, -2)).toEqual(spec?.find((h) => h.name === "release-cut")!.command);
   });
 
+  // terragucci#1531: a follow-on or resumed run has none of the first run's jobs, so its cut names none.
+  it.each([
+    ["a run on its own wave", { CHANT_WAVES_WAVE: "1" }, true],
+    ["a run with no follow-on variables", {}, true],
+    ["a follow-on that carries a commit", { CHANT_WAVES_COMMIT: "a".repeat(40) }, false],
+    ["a follow-on at a wave past the stage's last", { CHANT_WAVES_WAVE: "99" }, false],
+  ] as const)("%s: the release cut names own-run jobs is %s", async (_name, env, named) => {
+    const dir = repo({ [WAVES_SPEC]: shape(layers) });
+    pipelineCommand(dir, settings(), { log: () => {} });
+    commit(dir, { "terragucci.yml": PROMOTED });
+    const cut = (await wavesSpecAt(dir, { at: "HEAD", env, ownRunJobs: ["check", "apply-wave-1"] }))!.waves.at(-1)!.hooks?.after?.apply?.find((h) => h.name === "release-cut")!.command;
+    expect(cut?.includes("--own-run-jobs")).toBe(named);
+  });
+
   it.each(["github", "forgejo", "gitlab"] as const)("names on %s the check and every wave before the last, by the ids the forge reports them under", (forge) => {
     const render = (releaseCut: boolean) => renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["envs/dev/net"], ["envs/dev/app"], ["envs/dev/web"]], env: {}, ...(releaseCut ? { releaseCut } : {}) }).content;
     const commands = (text: string) => [...new Set([...text.matchAll(/CHANT_WAVES_SPEC_COMMAND: '(.*)'/g)].map((m) => m[1]!))].map((c) => JSON.parse(c) as string[]);

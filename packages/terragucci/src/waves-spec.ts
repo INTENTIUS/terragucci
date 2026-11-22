@@ -225,7 +225,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
   // The folded pipeline's first stage at base (./pipeline.ts firstStageRules), else risk and replan_dependents at base:
   // the stage's risk hold, its replanDependents, the canary's soak and the failure tolerance. Risk only adds approvals:
   // it sets no gate and never reads allow_unattended, so a low score lets no wave through that would wait without it.
-  const staged = firstStageRules(repo, sha, o.ownRunJobs) ?? topLevelRules(settings);
+  const staged = firstStageRules(repo, sha, o.ownRunJobs, env) ?? topLevelRules(settings);
   const cutsRelease = !onBranchRoute && (staged.releaseHooks?.length ?? 0) > 0;
   const hook = (name: string, what: "migrate-check" | "migrate" | "gate", onFailure?: "approve"): OpWaveHook => ({ name, command: waveCallArgv(what, "{runs}"), ...(onFailure ? { onFailure } : {}) });
   const terragrunt = (shape.step as { kind?: string } | undefined)?.kind === "terragrunt-apply";
