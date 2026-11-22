@@ -14,6 +14,8 @@ Release `0.4.65` is on npm as `@intentius/terragucci@0.4.65`, and its [GitHub re
 
 `terragucci install`, and the install a stage runs for a root that pins its own version, now work in a job whose user cannot write the install directory. That is the Chainguard set's user 65532 when `TOFU_INSTALL_DIR` is a cache directory the runner mounts as root. A release the directory already holds is used where it is. Otherwise the install goes under `$HOME/.cache/terragucci-bin`, or the temp directory's `terragucci-bin` when `$HOME` cannot be written, and the job's log says so in one line. It refuses only when the job's user can write none of them, and names the directory, the user and the remedy. The check happens before the download. A job that can write the directory, such as every job in the Debian set, installs there as before, so a runner that keeps it still shares each release between jobs.
 
+A wave that reads the state of a root an earlier wave applied now reads that wave's plan from the report its job handed on, on GitHub and Forgejo from the artifacts a wave's job downloads and on GitLab from the previous job's `terragucci-report/`. Before, with each wave in its own job, a repo without a `reports` bucket found no plan of the upstream, so the reading wave waited for an approval under `gate: on-destructive` even when every output it read was known at plan. It waits now only when the upstream's plan left an output it reads unknown ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)).
+
 ## In 0.4.65
 
 chant moves to `0.124.115`, in the package and in the images it builds.

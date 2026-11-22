@@ -107,7 +107,7 @@ describe("a tool's read of an upstream the change touches", () => {
     // Wave 1 applies vpc's new cidr; wave 2 plans app on it, which the pull request's review never showed, and waits.
     expect(await applyWave(work, { ...opts, wave: 1, now: T(1) })).toBe(0);
     expect(await applyWave(work, { ...opts, wave: 2, now: T(1) })).toBe(3);
-    expect(said()).toMatch(/dev\/app reads cidr of dev\/vpc, which wave 1's plan of dev\/vpc in this push \([^)]*\) changes/);
+    expect(said()).toMatch(/dev\/app reads cidr of dev\/vpc, which wave 1's plan of dev\/vpc in this run \(terragucci-report\), wave 1's plan of dev\/vpc in this push \([^)]*\) changes/);
     expect(said()).toContain("nobody reviewed the plan it made on those outputs, so it waits for an approval of it although gate is on-destructive");
     expect(readLog(log)).not.toContain("applied app");
   });
@@ -121,7 +121,7 @@ describe("a tool's read of an upstream the change touches", () => {
 
     expect(await applyWave(work, { ...opts, wave: 1, now: T(1) })).toBe(0);
     expect(await applyWave(work, { ...opts, wave: 2, now: T(1) })).toBe(3);
-    expect(said()).toMatch(/stacks\/app reads cidr of stacks\/network, which wave 1's plan of stacks\/network in this push \([^)]*\) changes/);
+    expect(said()).toMatch(/stacks\/app reads cidr of stacks\/network, which wave 1's plan of stacks\/network in this run \(terragucci-report\), wave 1's plan of stacks\/network in this push \([^)]*\) changes/);
     expect(said()).toContain("nobody reviewed the plan it made on those outputs, so it waits for an approval of it although gate is on-destructive");
     expect(readLog(log)).not.toContain("applied app");
   });
