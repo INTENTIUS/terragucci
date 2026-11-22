@@ -2923,7 +2923,7 @@ async function waveComposition(repo: string, options: ApplyWaveOptions, waves: s
 }
 
 /** A wave's roots by apply group, the composed run's target in the group its roots are in (they are all in one, or the change would not compose). */
-function groupsWithRun(roots: readonly string[], selectors: Record<string, string[]>, c: Composition | undefined): { name: string; roots: string[] }[] {
+export function groupsWithRun(roots: readonly string[], selectors: Record<string, string[]>, c: Composition | undefined): { name: string; roots: string[] }[] {
   const target = roots.find(isComposeTarget);
   if (!target || !c) return rootsByGroup(roots, selectors);
   const name = groupOf(c.order[0]!, selectors);

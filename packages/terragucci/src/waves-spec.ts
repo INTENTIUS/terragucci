@@ -58,7 +58,9 @@ import { resumeCron } from "./render";
 import { configAtBase } from "./report/policy";
 import { approveAbove, costHold, costHoldEnv } from "./cost";
 import { forgeOfEnv, rootsParallelism } from "./report/stage";
-import { branchLayers, changeComposition, migrationRunsOut, stepComposition } from "./apply";
+import { branchLayers, changeComposition, groupsWithRun, migrationRunsOut, stepComposition } from "./apply";
+import { applyGroups } from "./cloud-identity";
+import { DEFAULT_GROUP } from "./config";
 import { rootWorkspace } from "./workspace";
 import { rootDir, rootPath } from "./root-config";
 import { firstStageRules, joinHooks, topLevelRules } from "./pipeline";
@@ -151,6 +153,13 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
   // allow_unattended at base: chant's gate is never, and terragucci's after-plan hook holds a wave its gate would hold.
   const unattended = rule.policyOutcomes?.includes("allow_unattended") === true;
 
+  // terragucci#1522: one apply job per identity (./cloud-identity.ts). The pipeline has a job for each group, as init
+  // found them over every root of the shape; chant's group job applies only the runs its group holds in this spec, and
+  // a group the spec lacks applies nothing. Each group by its selectors, the rest in default, as `--groups` names them.
+  const shapeRoots = shape.waves.flatMap((w) => (w.discover ? [] : (w.runs ?? []).map((r) => r.target))).filter((r) => !isComposeTarget(r));
+  const applyGroupsAt = shape.waves.some((w) => w.discover) ? undefined : applyGroups(settings, shapeRoots);
+  const selectors = applyGroupsAt ? Object.fromEntries(applyGroupsAt.filter((g) => g.name !== DEFAULT_GROUP).map((g) => [g.name, g.selectors.length > 0 ? g.selectors : g.roots])) : undefined;
+
   // apply.branches: the runs this branch applies, cut as stage tf-apply cut its layers.
   const routes = settings.apply?.branches && Object.keys(settings.apply.branches).length > 0 ? settings.apply.branches : undefined;
   let layers = shape.waves.map((w) => (w.runs ?? []).map((r) => r.target));
@@ -171,9 +180,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
   if (o.base && !shape.waves.some((w) => w.discover)) {
     if (settings.waves?.compose === true) {
       // One apply job per identity: a composed run takes roots of one group only.
-      const groups: Record<string, string[]> = {};
-      for (const g of shape.waves.flatMap((w) => w.jobs ?? [])) groups[g.name] = [...(groups[g.name] ?? []), ...(g.runs ?? [])];
-      composition = await changeComposition(repo, { layers, base: o.base, ...(o.config ? { config: o.config } : {}), env, ...(Object.keys(groups).length ? { groups } : {}) });
+      composition = await changeComposition(repo, { layers, base: o.base, ...(o.config ? { config: o.config } : {}), env, ...(selectors ? { groups: selectors } : {}) });
       const c = stepComposition(composition);
       if (c) {
         layers.forEach((roots, i) => {
@@ -227,9 +234,12 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
     const runs = w.discover ? (w.runs ?? []) : (layers[i] ?? []).map((target) => { const input = runInput(target); return { target, ...(input ? { input } : {}) }; });
     const { hooks: _hooks, approval: _approval, ...rest } = w as OpWave & { approval?: unknown };
     const last = i === shape.waves.length - 1;
+    // Each group's job applies the runs of this wave its group holds; a composed run goes with the group of its roots.
+    const jobs = selectors && !w.discover ? groupsWithRun(layers[i] ?? [], selectors, together === i + 1 ? composition : undefined).map((g) => ({ name: g.name, runs: g.roots })) : undefined;
     return {
       ...rest,
       runs,
+      ...(jobs?.length ? { jobs } : {}),
       gate,
       approval: rule.mode === "sealed" ? "sealed" : rule.mode === "pr-review" ? "pr-review" : "ledger",
       // The composed run's roots plan and apply together (chant#4848).
