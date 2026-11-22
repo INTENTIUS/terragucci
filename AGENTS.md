@@ -9,4 +9,4 @@ Working in the INTENTIUS workspace, `../agents/shared.md` applies too. This file
 - Person-started recipes (exit 3 without a person typing `run`, via `stack/human-gate.sh`): `claims`, `claims-affected`, `binary-claims`, `gitlab-claims`, `smoke-record`, `validate`, `validate-forge`, `validation-record`, `tutorial-capture`, `capture`, `sandbox`, `gitlab-lab up`, `example-gitlab`, `scale`, `coverage-fill`, and the `stack/` scripts behind them. The override variable is `TG_HUMAN_RUN`; never set it. Claims are not part of making a change.
 - The example lives in `example/`. An edit there needs `just example-patches`; `just tutorial-check` then lists the stale captures, and a person recaptures them.
 
-Merging: no merge queue yet. Open the pull request with the local gate passing and stop; the orchestrator merges.
+main has a merge queue. Open the pull request with `Closes #N` once the local gate passes, and queue it with `gh pr merge <n> --auto --squash`. The queue tests it on top of main before it merges. Do not watch CI or use `--admin`.
