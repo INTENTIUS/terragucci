@@ -803,6 +803,7 @@ The command writes nothing to the repo. behold refuses to deploy, approve or sta
 
 ```text
 terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
+terragucci drift-agent show --report <dir>
 terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
 ```
 
@@ -811,6 +812,7 @@ Two generated jobs, `drift-agent` and `drift-agent-push`, run the halves of the 
 | Command | Does |
 |---|---|
 | `drift-agent prompt` | reads `report.json` and `issue.json` from the drift job's report in `--report`, and writes the prompt to `--out`: each drifted resource with the state's value and the live one, never a sensitive one; exits 1 when the run opened no drift issue |
+| `drift-agent show` | reads `report.json` from the drift job's report in `--report` and prints each drifted resource with the state's value and the live one, never a sensitive one. With `agent.drift` the drift script runs it when the run opened the drift issue, so [chant's drift agent](/terragucci/guides/agent-fix-drift/#the-jobs) reads the values in the run's output |
 | `drift-agent push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them; commits a passing patch on top of `TG_SHA` to `terragucci/drift-agent-<issue>`, pushes it without force with `TG_TOKEN`, opens the pull request and comments its link on the issue `TG_ISSUE` names |
 
 ## config check

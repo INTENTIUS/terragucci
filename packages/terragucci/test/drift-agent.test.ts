@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { AGENT_COMMAND, agentDriftInput } from "../src/agent-comment";
 import { ConfigError, validateConfig } from "../src/config";
-import { DRIFT_ISSUE_JS, driftPrompt, pushDriftChange, writeDriftPrompt } from "../src/drift-agent";
+import { DRIFT_ISSUE_JS, driftPrompt, pushDriftChange, showDrift, writeDriftPrompt } from "../src/drift-agent";
 import type { Fetch } from "../src/forge";
 import { driftScript, renderPipeline } from "../src/render";
 import type { Report } from "../src/report/schema";
@@ -88,6 +88,32 @@ describe("the drift agent's prompt", () => {
     expect(readFileSync(out, "utf-8")).toContain("visibility_timeout_seconds");
     writeFileSync(join(dir, "issue.json"), JSON.stringify({ action: "updated", number: 12 }));
     expect(() => writeDriftPrompt({ report: dir, out, policyDir: "policy" })).toThrow(/opened no drift issue/);
+  });
+
+  it("shows what drifted, state against live, for chant's drift agent to read in the drift step's output (terragucci#1517)", () => {
+    const dir = write(tmp(), { "report.json": JSON.stringify(report()) });
+    expect(showDrift(dir)).toBe(
+      "terragucci drift-agent: what drifted, state against live:\nroot app:\n  aws_sqs_queue.jobs: changed\n    visibility_timeout_seconds: state 30, live 45\n    policy: sensitive, not shown\n  aws_db_instance.db: no longer exists\n",
+    );
+    const none = write(tmp(), { "report.json": JSON.stringify({ ...report(), roots: [{ path: "net", status: "planned", changes: [] }] }) });
+    expect(showDrift(none)).toBe("terragucci drift-agent: the drift report lists no drifted resource\n");
+    expect(() => showDrift(tmp())).toThrow(/reads report.json/);
+    const plan = write(tmp(), { "report.json": JSON.stringify({ ...report(), run: { ...report().run, stage: "tf-plan" } }) });
+    expect(() => showDrift(plan)).toThrow(/tf-drift report/);
+  });
+
+  it("the drift script with agent.drift shows what drifted when the run opened the drift issue, and only then", () => {
+    const script = driftScript("tofu", [["app"]], "forgejo", undefined, {}, undefined, false, "chant");
+    const lines = script.split("\n");
+    const show = lines.findIndex((l) => l.includes("terragucci drift-agent show --report terragucci-report"));
+    expect(show).toBeGreaterThan(lines.findIndex((l) => l.includes("rc=2")));
+    expect(show).toBeLessThan(lines.indexOf('exit "$rc"'));
+    const bin = write(tmp(), { terragucci: '#!/bin/sh\necho "shown: $*"\n' });
+    execFileSync("chmod", ["+x", join(bin, "terragucci")]);
+    const run = (rc: number): string => execFileSync("bash", ["-c", `rc=${rc}\n${lines[show]}\necho "rc=$rc"`], { encoding: "utf-8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    expect(run(2)).toBe("shown: drift-agent show --report terragucci-report\nrc=2\n");
+    expect(run(0)).toBe("rc=0\n");
+    expect(driftScript("tofu", [["app"]], "forgejo")).not.toContain("drift-agent show");
   });
 
   it("the drift job's outputs say agent=1 and the issue only when the run opened it", () => {

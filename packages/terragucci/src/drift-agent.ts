@@ -60,10 +60,10 @@ const value = (v: unknown): string => {
   return s === undefined ? "absent" : s.length > 200 ? `${s.slice(0, 200)}...` : s;
 };
 
-/** The agent's prompt: each drifted resource with what the state held and what is live, as data, and the rules the push job enforces either way. */
-export function driftPrompt(o: { report: Report; issue: number; policyDir: string }): string {
+/** Each drifted resource with what the state held and what is live, never a sensitive value. */
+export function driftLines(report: Report): string[] {
   const lines: string[] = [];
-  for (const r of o.report.roots) {
+  for (const r of report.roots) {
     if (r.status !== "planned" || r.changes.length === 0) continue;
     lines.push(`root ${r.path}:`);
     for (const c of r.changes) {
@@ -75,6 +75,12 @@ export function driftPrompt(o: { report: Report; issue: number; policyDir: strin
       }
     }
   }
+  return lines;
+}
+
+/** The agent's prompt: each drifted resource with what the state held and what is live, as data, and the rules the push job enforces either way. */
+export function driftPrompt(o: { report: Report; issue: number; policyDir: string }): string {
+  const lines = driftLines(o.report);
   return [
     `You are working in a checkout of the default branch at ${o.report.run.commit}. A scheduled refresh-only plan found that the cloud no longer matches what this code last applied, and terragucci opened drift issue #${o.issue}. What it found, as data:`,
     "",
@@ -106,6 +112,25 @@ export function writeDriftPrompt(o: { report: string; out: string; policyDir: st
   if (issue.action !== "opened" || !Number.isInteger(issue.number) || report.run?.stage !== "tf-drift") throw new ConfigError("the drift job opened no drift issue, so there is nothing for the agent");
   writeFileSync(o.out, driftPrompt({ report, issue: issue.number!, policyDir: o.policyDir }));
   return { issue: issue.number!, roots: report.roots.filter((r) => r.status === "planned" && r.changes.length > 0).length };
+}
+
+/**
+ * `terragucci drift-agent show`: what drifted, from the drift job's report,
+ * for the drift step's output. With agent.drift the drift job is chant's drift
+ * Op, and chant's agent job puts that output in the agent's prompt (chant
+ * issue 4622), so the agent reads the live values from it. Sensitive values
+ * are never shown.
+ */
+export function showDrift(reportDir: string): string {
+  let report: Report;
+  try {
+    report = JSON.parse(readFileSync(join(reportDir, "report.json"), "utf-8")) as Report;
+  } catch (e) {
+    throw new ConfigError(`drift-agent show reads report.json from the drift job's report (${(e as Error).message})`);
+  }
+  if (report.run?.stage !== "tf-drift") throw new ConfigError("drift-agent show reads a tf-drift report");
+  const lines = driftLines(report);
+  return [lines.length ? "terragucci drift-agent: what drifted, state against live:" : "terragucci drift-agent: the drift report lists no drifted resource", ...lines].join("\n") + "\n";
 }
 
 export interface DriftPushResult {

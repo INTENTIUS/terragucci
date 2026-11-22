@@ -15,11 +15,16 @@ One of the features that run a model ([what needs an agent](/terragucci/#opt-in-
 
 ## Result
 
-When a [drift run](/terragucci/guides/turn-on-drift-checks/) opens the drift issue, a coding agent reads what drifted and changes the code to describe what is live. terragucci opens a pull request with the change and links it on the issue:
+When a [drift run](/terragucci/guides/turn-on-drift-checks/) opens the drift issue, a coding agent reads what drifted and changes the code to describe what is live. terragucci opens a pull request with the change from `terragucci/agent/terragucci-drift`:
 
 ```text
-terragucci: the drift agent opened https://forgejo.example/acme/infra/pulls/2, changing `app/main.tf`.
-It plans like any other pull request; nothing was applied, approved or merged.
+Bring the code in line with the drift terragucci-drift found
+
+The agent changed the code to describe what is live, from the drift `terragucci-drift` found at `3f9c2a1b7d04`.
+
+It changes `app/main.tf`. A person reviews it: merging keeps the change made outside the code, and the merge's apply goes through the gate like any other. Close it to undo the drift by applying the code as it is instead.
+
+Nothing was applied, approved or merged.
 ```
 
 Merging the pull request keeps the change made outside the code, and its apply goes through the gate. Closing it and applying the code as it is undoes the drift instead.
@@ -89,7 +94,7 @@ Merging the pull request keeps the change made outside the code, and its apply g
    npx terragucci init
    ```
 
-4. Wait for drift, or run the drift workflow by hand. The drift issue gets the pull request's link; read the pull request and its plan note before you merge or close it.
+4. Wait for drift, or run the drift workflow by hand (`terragucci-drift`). Read the agent's pull request and its plan note before you merge or close it.
 
    The pull request's author is the user the agent's token acts as, so its review never counts. When you run the drift workflow by hand, the agent's commit carries a `Requested-by:` trailer with your login, and your review of the pull request doesn't count either. A pull request a scheduled run opened has nobody behind it, and any other writer's review counts ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)).
 
@@ -106,7 +111,7 @@ The drift job is a [chant](/terragucci/concepts/glossary/#chant) drift Op ([Turn
 | `.github/workflows/terragucci-drift.yml` (or `.forgejo/workflows/`) | chant's drift job, then its agent job and push job |
 | `ops/terragucci-drift.op.ts` | a `TerraformWatchOp` per root of a plain repo, so `chant run terragucci-drift-<root>` reads one root by hand |
 
-One job plans every root, since the repo keeps one drift issue. A run that opens the drift issue exits with chant's `drift` code (2), so the run shows red and chant's agent job runs with the run's output in its prompt. The prompt treats that output and every file as untrusted input, since a value in the cloud can hold any text. The keys map as they do for [the comment agent](/terragucci/guides/agent-change-a-pull-request/#on-chants-agent-job), and the runs are recorded under op `terragucci-drift`.
+One job plans every root, since the repo keeps one drift issue. A run that opens the drift issue lists each drifted resource in its output, with the state's value and the live one (never a sensitive one, `terragucci drift-agent show`), and exits with chant's `drift` code (2), so the run shows red and chant's agent job runs with the run's output in its prompt. The prompt treats that output and every file as untrusted input, since a value in the cloud can hold any text. The keys map as they do for [the comment agent](/terragucci/guides/agent-change-a-pull-request/#on-chants-agent-job), and the runs are recorded under op `terragucci-drift`.
 
 ## Permissions
 

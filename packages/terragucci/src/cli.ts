@@ -96,6 +96,7 @@
  *   terragucci notify unrecorded [--audit <dir>]   (post the state versions no wave or migration recorded that the audit run added to Slack and Teams; run after terragucci audit)
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
+ *   terragucci drift-agent show --report <dir>   (print what drifted, state against live, from the drift job's report; run by the generated drift script with agent.drift, so chant's drift agent reads it)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
  *   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (one table, filtered: chant's ledgers on chant/lifecycle (resources, snapshots, runs, gates, deploys, releases, cuts) or the reports bucket's (inventory, versions, changes, history, audit, edges); the "<sql>" form is deprecated)
  *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
@@ -206,7 +207,7 @@ import { startRelay } from "./relay-host";
 import { mcp } from "./mcp";
 import { describeGuard, writeGuard } from "./guard";
 import { describeQuery, describeTable, isSql, query, readTable, SQL_DEPRECATED } from "./query";
-import { driftStarter, pushDriftChange, writeDriftPrompt } from "./drift-agent";
+import { driftStarter, pushDriftChange, showDrift, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
 import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
@@ -263,6 +264,7 @@ const USAGE = `usage:
   terragucci notify unrecorded [--audit <dir>]
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks through chant's relay; settings from TERRAGUCCI_RELAY_* and CHANT_RELAY_KEY in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
+  terragucci drift-agent show --report <dir>
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   one table's rows, filtered: resources, snapshots, runs, gates, deploys, releases or cuts from chant/lifecycle, or inventory, versions, changes, history, audit or edges from the reports bucket ("<sql>" is deprecated)
   terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   the repo's roots as one graph in behold, marked from the reports bucket, on your machine
@@ -1261,6 +1263,12 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`terragucci drift-agent: wrote the prompt for drift issue #${w.issue}, ${w.roots} root${w.roots === 1 ? "" : "s"} drifted`);
           return 0;
         }
+        if (sub === "show") {
+          const report = str(flags, "report");
+          if (!report) throw new ConfigError("drift-agent show needs --report <dir>");
+          process.stdout.write(showDrift(resolve(cwd, report)));
+          return 0;
+        }
         if (sub === "push") {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("drift-agent push needs --change <dir>");
@@ -1271,7 +1279,7 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`terragucci drift-agent: ${r.reason}`);
           return r.fail ? 1 : 0;
         }
-        throw new ConfigError("drift-agent is drift-agent prompt or drift-agent push");
+        throw new ConfigError("drift-agent is drift-agent prompt, drift-agent show or drift-agent push");
       }
       case "query": {
         const [what, extra] = args;
