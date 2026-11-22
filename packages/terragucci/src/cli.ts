@@ -142,7 +142,7 @@ import { pipelineCommand } from "./pipeline";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, approveRelease, isGateKeyword, overrideDenial } from "./approve";
-import { promoteAgentFactsEnv, releaseArgv, releaseRefusal, releaseWords } from "./promotion";
+import { promoteAgentFactsEnv, releaseApproval, releaseArgv, releaseRefusal, releaseWords, stageRollbackArgv } from "./promotion";
 import { decidePlanLock, reached } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
@@ -280,7 +280,7 @@ const USAGE = `usage:
   terragucci rollback <env> --release <label> [--dry-run] [--json]   deploy an earlier release to <env>
     (export, unlock, action and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
-  terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml; --check fails when the committed file is stale
+  terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml, as init does; --check fails when the committed file is stale
   terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   turn down the release a stage's gate waits on
   terragucci pause <env> --reason <text>   stop releases entering a stage; terragucci resume <env> --reason <text> lets them in again
   terragucci release cut <label|auto> --yes | terragucci pipeline artifacts publish --stage <env>   (run by the merge's last wave with promotion: chant's release cut and artifacts publish)
@@ -1397,10 +1397,20 @@ export async function main(argv: string[]): Promise<number> {
         const chantArgv = releaseArgv(verb, { args, flags });
         const refused = releaseRefusal(cwd);
         if (refused) throw new ConfigError(`${verb}: ${refused}`);
+        const path = findConfig(cwd);
+        const settings = path ? resolveRepo(await loadConfig(resolve(path))) : {};
+        // One approval per stage: the stage's gate in .chant/pipeline.ts when the components carry none, else the components' release gate.
+        const env = verb === "promote" ? chantArgv[3]! : chantArgv[2]!;
+        const approval = releaseApproval(cwd, env, settings);
+        if ("refused" in approval) throw new ConfigError(`${verb}: ${approval.refused}`);
         // agent.verify-failed (chant#5339): the promote records a failed verify or soak as a fact for the agent.
-        if (verb === "promote") {
-          const path = findConfig(cwd);
-          if (path) Object.assign(process.env, promoteAgentFactsEnv(resolveRepo(await loadConfig(resolve(path))), process.env));
+        if (verb === "promote") Object.assign(process.env, promoteAgentFactsEnv(settings, process.env));
+        if (verb === "rollback" && approval.via === "stage") {
+          const release = chantArgv[4]!;
+          const code = await runChantInProcess(stageRollbackArgv(chantArgv), releaseWords(TERRAGUCCI_WORDS));
+          // pause_after_rollback: chant's rollback pauses the stage; a rollback through the stage's gate pauses it here.
+          if (code !== 0 || !approval.pauseAfterRollback || flags["dry-run"] === true) return code;
+          return runChantInProcess(["stage", "pause", env, "--reason", `rolled back to release ${release}`], TERRAGUCCI_WORDS);
         }
         return runChantInProcess(chantArgv, releaseWords(TERRAGUCCI_WORDS));
       }

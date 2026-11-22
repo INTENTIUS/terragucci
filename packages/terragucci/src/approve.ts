@@ -492,9 +492,11 @@ export function waitingStageGate(ledger: GateLedger, environment: string, plan?:
 /**
  * `terragucci approve release <env> [--plan <digest>]`: approve the gate a
  * `terragucci promote` or `rollback` stopped at (./promotion.ts). With
- * `.chant/pipeline.ts`, a promote stops first at the environment's stage
- * gate, and while that gate waits this approves it: `chant approve tf-apply
- * <env> --env <env>`. Otherwise it approves the components' release gate:
+ * `.chant/pipeline.ts`, a promote or rollback stops at the environment's
+ * stage gate, its one approval, and while that gate waits this approves it:
+ * `chant approve tf-apply <env> --env <env>`. Beside a pipeline the repo
+ * wrote itself, the components keep a gate of their own, and otherwise this
+ * approves the components' release gate:
  * each component of the environment waits at a gate named after it, and
  * chant's release gate binds that gate to the release, the environment and
  * the change set the promote planned: `chant approve release <env> --env

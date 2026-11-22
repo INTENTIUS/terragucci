@@ -12,6 +12,8 @@ import { planFile, planRemoval, staleGeneratedFiles, writePlannedFiles, type Pla
 import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import { CHANT_CONFIG, chantConfigText, chantConfigWrittenByTerragucci } from "./chant-config";
+import { PIPELINE_FILE } from "@intentius/chant/pipeline";
+import { pipelineTextFromSpec, pipelineWrittenByTerragucci } from "./pipeline";
 import { PROMOTION_COMPONENTS, promotionComponentsText, promotionComponentsWrittenByTerragucci, promotionPlan } from "./promotion";
 import { waveCallArgv, wavesSpecText, wavesStepSpec } from "./chant-waves";
 import { MIGRATIONS_DIR } from "./migrate";
@@ -553,10 +555,18 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (existsSync(promotionPath) && !options.force && !promotionComponentsWrittenByTerragucci(readFileSync(promotionPath, "utf-8"))) {
       throw new ConfigError(`${PROMOTION_COMPONENTS} exists and terragucci did not write it; move it aside or pass --force`);
     }
-    const plan = promotionPlan({ promotion: settings.promotion, roots, settings, order: found.order });
+    // .chant/pipeline.ts, from the same settings and the waves spec written here, so the pipeline's stage gates and the
+    // components' gates always agree: an environment the pipeline gates is approved once, at its stage's gate.
+    // A pipeline the repo wrote itself stays, and the components keep a gate of their own in every gated environment.
+    const pipelineFile = join(repo, PIPELINE_FILE);
+    const ownPipeline = existsSync(pipelineFile) && !options.force && !pipelineWrittenByTerragucci(readFileSync(pipelineFile, "utf-8"));
+    const pipelineContent = ownPipeline || !stepSpec ? undefined : pipelineTextFromSpec(settings, stepSpec);
+    if (ownPipeline) notes.push(`${PIPELINE_FILE} is the repo's own, so terragucci left it, and each gated environment's components keep a gate of their own`);
+    const plan = promotionPlan({ promotion: settings.promotion, roots, settings, order: found.order, pipeline: pipelineContent !== undefined });
     if (plan.problems.length) throw new ConfigError(`promotion cannot be written as components:\n  ${plan.problems.join("\n  ")}`, plan.problems);
     notes.push(...plan.notes);
     files.push(planFile(promotionPath, promotionComponentsText(plan, settings.promotion)));
+    if (pipelineContent !== undefined) files.push(planFile(pipelineFile, pipelineContent));
   } else if (existsSync(promotionPath) && promotionComponentsWrittenByTerragucci(readFileSync(promotionPath, "utf-8"))) {
     // promotion was taken out: the components an earlier init wrote go with it.
     const removal = planRemoval(promotionPath);

@@ -314,7 +314,7 @@ describe("control.release", () => {
 
 describe("on_verify_fail: rollback on the promote path", () => {
   it("is accepted for terragucci.component.ts: its terraform-apply steps answer releaseInputs, and its gates are skipped", async () => {
-    const text = promotionComponentsText({ components: [{ name: "envs-net", byEnv: { dev: { root: "envs/dev/net", dependsOn: [] }, prod: { root: "envs/prod/net", dependsOn: [] } } }], gated: ["prod"] }, ["dev", "prod"]);
+    const text = promotionComponentsText({ components: [{ name: "envs-net", byEnv: { dev: { root: "envs/dev/net", dependsOn: [] }, prod: { root: "envs/prod/net", dependsOn: [] } } }], gated: ["prod"], componentGated: ["prod"] }, ["dev", "prod"]);
     expect(text).toContain('kind: "terraform-apply"');
     const { terraformApplyCapability } = await import("@intentius/chant-lexicon-terraform");
     const steps = [{ where: 'component "envs-net" step Apply/terraform-apply', kind: "terraform-apply" }];

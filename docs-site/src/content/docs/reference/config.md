@@ -209,7 +209,7 @@ dashboards: true
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 | `ephemeral` | none (off) | `roots`, root globs each pull request gets a copy of under state keys of its own, `ttl` (`<n>m`, `<n>h` or `<n>d`, default `24h`) and `sweep` (minutes between the sweep's runs, 5 to 60, default 30); read at base; see [Ephemeral environments](#ephemeral-environments) |
 | `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc`, `runner`, `parallelism` and `forge_environment`, plus the keys of its stage; a root in no environment takes the top-level values. Each environment's roots apply in jobs of their own. Read at base; see [Environments](#environments) and [Stages](#stages) |
-| `promotion` | none (off) | the order a release moves through the environments, first to last: names of `environments`, each once, two or more. `init` writes the roots of those environments as components for [`terragucci promote` and `rollback`](/terragucci/reference/cli/#promote-and-rollback), and `terragucci ci` writes `.chant/pipeline.ts` with one stage per name; see [Promotion](#promotion) and [Stages](#stages) |
+| `promotion` | none (off) | the order a release moves through the environments, first to last: names of `environments`, each once, two or more. `init` writes the roots of those environments as components for [`terragucci promote` and `rollback`](/terragucci/reference/cli/#promote-and-rollback), and `.chant/pipeline.ts` with one stage per name, which `terragucci ci` writes again; see [Promotion](#promotion) and [Stages](#stages) |
 | `risk` | none (off) | `approve_above`, a change risk score from 0 to 1 above which a wave needs an approval of its own, whatever its gate says; see [Change risk](#change-risk) |
 | `replan_dependents` | none (off) | root names or globs whose dependents are planned again when an output they read comes out changed after an apply; see [Planning dependents again](#planning-dependents-again) |
 | `config_sets` | none | shared sets of `config`, `secrets` and `imports` that environments import; see [Config and secret sets](#config-and-secret-sets) |
@@ -468,13 +468,13 @@ environments:
 promotion: [dev, staging, prod]
 ```
 
-`promotion` lists environments of `environments` in the order a release moves through them. Run `npx terragucci init` after setting it: it lists the same order under `environments` in `chant.config.ts`, and writes `terragucci.component.ts` with each environment's roots, which [`terragucci promote`](/terragucci/reference/cli/#promote-and-rollback) and `rollback` deploy. An environment's `gate` decides whether a promote into it waits for [`terragucci approve release <env>`](/terragucci/reference/cli/#approve). The pipeline a merge runs is the same with or without `promotion`.
+`promotion` lists environments of `environments` in the order a release moves through them. Run `npx terragucci init` after setting it: it lists the same order under `environments` in `chant.config.ts`, and writes `terragucci.component.ts` with each environment's roots, which [`terragucci promote`](/terragucci/reference/cli/#promote-and-rollback) and `rollback` deploy. An environment's `gate` decides whether a promote into it waits for [`terragucci approve release <env>`](/terragucci/reference/cli/#approve), once, at the stage's gate in `.chant/pipeline.ts`. The pipeline a merge runs is the same with or without `promotion`.
 
 `terragucci config check` refuses a list of fewer than two names, a name listed twice, a name that is not one of `environments`, and `promotion` beside `terragrunt` or `atmos`. `init` refuses it in a Terramate repo, two roots of one environment that make the same component, and an environment whose globs match no root. [Promote a release through environments](/terragucci/guides/promote-a-release/) walks through it.
 
 ## Stages
 
-With `promotion`, each environment it lists is a stage of chant's pipeline, in that order. `terragucci ci` writes the declaration to `.chant/pipeline.ts` with chant's helper, and `terragucci ci --check` exits 1 while the committed file differs from what `terragucci.yml` writes. chant folds the file at each promote and reads the stage keys there, so a pull request that changes them takes effect once it merges.
+With `promotion`, each environment it lists is a stage of chant's pipeline, in that order. `terragucci init` and `terragucci ci` write the declaration to `.chant/pipeline.ts` with chant's helper, and `terragucci ci --check` exits 1 while the committed file differs from what `terragucci.yml` writes. chant folds the file at each promote and reads the stage keys there, so a pull request that changes them takes effect once it merges.
 
 ```yaml
 promotion: [dev, staging, prod]

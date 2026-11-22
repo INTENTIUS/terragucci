@@ -6,16 +6,20 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chantConfigText } from "../src/chant-config";
-import { ConfigError, validateConfig } from "../src/config";
+import { ConfigError, resolveRepo, validateConfig } from "../src/config";
 import {
+  componentGateEnvironments,
   componentName,
   PROMOTION_COMPONENTS,
   promotionComponentsText,
   promotionPlan,
+  releaseApproval,
   releaseArgv,
   releaseRefusal,
   releaseWords,
+  stageRollbackArgv,
 } from "../src/promotion";
+import { committedPipeline, pipelineGatedStages, pipelineText, pipelineWrittenByTerragucci } from "../src/pipeline";
 import { TERRAGUCCI_WORDS } from "../src/ci-words";
 import { planEnv } from "../src/product-plan";
 import { renderPipeline } from "../src/render";
@@ -36,6 +40,8 @@ function checkConfig(raw: unknown): { problems: string[] } {
 }
 
 const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
+/** A root init finds: a backend block. */
+const TF = 'terraform {\n  backend "s3" {}\n}\n';
 const CHANT = join(import.meta.dirname, "../../../node_modules/.bin/chant");
 const hasTofu = spawnSync("tofu", ["version"], { encoding: "utf-8" }).status === 0;
 
@@ -58,7 +64,7 @@ describe("promotion in terragucci.yml", () => {
     expect(componentName("Stacks/QA_web", "dev")).toBe("stacks-qa-web");
   });
 
-  it("writes each environment's own roots, its order inside the environment, and a gate unless the environment's gate is never", () => {
+  it("with no pipeline, writes each environment's own roots, its order inside the environment, and a gate unless the environment's gate is never", () => {
     const roots = ["envs/dev/app", "envs/dev/net", "envs/staging/app", "envs/staging/net", "shared/dns"];
     const order = new Map([
       ["envs/dev/app", new Set(["envs/dev/net"])],
@@ -77,6 +83,22 @@ describe("promotion in terragucci.yml", () => {
     expect(text).not.toContain("CHANT_ENV");
     expect(text).not.toContain("shared/dns");
     expect(text).toContain("chant-disable COMP004");
+    expect(plan.componentGated).toEqual(["staging"]);
+    expect(componentGateEnvironments(text)).toEqual(["staging"]);
+  });
+
+  // terragucci#1532: a stage the pipeline gates is approved once, at its stage gate.
+  it("with the pipeline, writes no component gate for an environment the pipeline gates", () => {
+    const settings = { gate: "on-destructive" as const, environments: { dev: { roots: ["envs/dev/**"], gate: "never" as const }, staging: { roots: ["envs/staging/**"], gate: "always" as const }, prod: { roots: ["envs/prod/**"] } } };
+    const plan = promotionPlan({ promotion: ["dev", "staging", "prod"], roots: ["envs/dev/net", "envs/staging/net", "envs/prod/net"], settings, order: new Map(), pipeline: true });
+    expect(plan.gated).toEqual(["staging", "prod"]);
+    expect(pipelineGatedStages({ ...settings, promotion: ["dev", "staging", "prod"] })).toEqual(["staging", "prod"]);
+    expect(plan.componentGated).toEqual([]);
+    const text = promotionComponentsText(plan, ["dev", "staging", "prod"]);
+    expect(text).not.toContain('kind: "gate"');
+    expect(text).not.toContain("COMP004");
+    expect(text).toContain("// Approved once, at the stage's gate in .chant/pipeline.ts: staging, prod; terragucci approve release <env>");
+    expect(componentGateEnvironments(text)).toEqual([]);
   });
 
   it("refuses two roots of one environment that make one component, and an environment with no roots", () => {
@@ -154,6 +176,39 @@ describe("the plan environment under promotion", () => {
     expect(envsOf(await workflow())).toEqual(["default"]);
   });
 
+  it("is what init writes into the components and .chant/pipeline.ts: one gate per stage, the pipeline's", async () => {
+    const dir = tmp();
+    write(dir, {
+      "terragucci.yml": 'forge: github\nenvironments:\n  dev: { roots: ["envs/dev/**"], gate: never }\n  staging: { roots: ["envs/staging/**"], gate: always }\n  prod: { roots: ["envs/prod/**"], gate: always }\npromotion: [dev, staging, prod]\n',
+      "envs/dev/net/main.tf": TF, "envs/staging/net/main.tf": TF, "envs/prod/net/main.tf": TF,
+    });
+    git(dir, "init", "-q", "-b", "main");
+    await init(dir, { binary: "tofu" });
+    const components = readFileSync(join(dir, PROMOTION_COMPONENTS), "utf-8");
+    expect(componentGateEnvironments(components)).toEqual([]);
+    const pipeline = readFileSync(join(dir, ".chant/pipeline.ts"), "utf-8");
+    expect(pipelineWrittenByTerragucci(pipeline)).toBe(true);
+    // The pipeline init writes is the one terragucci ci writes, and it gates staging and prod.
+    expect(pipeline).toBe(pipelineText(dir, resolveRepo(parseYAML(readFileSync(join(dir, "terragucci.yml"), "utf-8")) as never)));
+    const stages = committedPipeline(dir)!.stages;
+    expect(stages.map((s) => [s.name, s.gate?.policy])).toEqual([["dev", "never"], ["staging", "always"], ["prod", "always"]]);
+  });
+
+  it("keeps the components' gates beside a .chant/pipeline.ts the repo wrote itself", async () => {
+    const dir = tmp();
+    const own = "// the repo's own pipeline\nexport default {};\n";
+    write(dir, {
+      "terragucci.yml": 'forge: github\nenvironments:\n  dev: { roots: ["envs/dev/**"], gate: never }\n  prod: { roots: ["envs/prod/**"], gate: always }\npromotion: [dev, prod]\n',
+      "envs/dev/net/main.tf": TF, "envs/prod/net/main.tf": TF,
+      ".chant/pipeline.ts": own,
+    });
+    git(dir, "init", "-q", "-b", "main");
+    const r = await init(dir, { binary: "tofu" });
+    expect(readFileSync(join(dir, ".chant/pipeline.ts"), "utf-8")).toBe(own);
+    expect(componentGateEnvironments(readFileSync(join(dir, PROMOTION_COMPONENTS), "utf-8"))).toEqual(["prod"]);
+    expect(r.notes.join("\n")).toMatch(/\.chant\/pipeline\.ts is the repo's own, so terragucci left it/);
+  });
+
   it("names the first stage in prow's plan note and stale mark", () => {
     const prow = (env?: string): string[] => [renderProwJobs({
       repo: "acme/infra",
@@ -194,6 +249,38 @@ describe("terragucci promote and rollback's command lines", () => {
     write(repo, { [PROMOTION_COMPONENTS]: "" });
     expect(releaseRefusal(repo, [join(repo, "package.json")])).toMatch(/npm i -D @intentius\/chant-lexicon-terraform@\d/);
     expect(releaseRefusal(repo)).toBeUndefined();
+  });
+
+  it("take a stage's one approval at its pipeline gate, and refuse when the pipeline chant reads does not gate it", () => {
+    const settings = { environments: { dev: { roots: ["envs/dev/**"], gate: "never" as const }, prod: { roots: ["envs/prod/**"], gate: "always" as const } } };
+    const plan = promotionPlan({ promotion: ["dev", "prod"], roots: ["envs/dev/net", "envs/prod/net"], settings, order: new Map(), pipeline: true });
+    const repo = tmp();
+    write(repo, { [PROMOTION_COMPONENTS]: promotionComponentsText(plan, ["dev", "prod"]) });
+    git(repo, "init", "-q", "-b", "main");
+    const commit = () => git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-am", "c");
+    git(repo, "add", "-A");
+    commit();
+    // No pipeline on the default branch: prod waits for nobody, so the promote is refused.
+    expect(releaseApproval(repo, "prod", settings)).toEqual({ refused: expect.stringMatching(/prod's approval is its stage gate in \.chant\/pipeline\.ts.*there is no \.chant\/pipeline\.ts at [0-9a-f]{12}/) });
+    // dev's gate is never: it deploys as it did, with no approval.
+    expect(releaseApproval(repo, "dev", settings)).toEqual({ via: "component" });
+    // A pipeline whose prod gate is never is refused too.
+    const pipeline = (gate: string, extra = "") => `import { pipeline } from "@intentius/chant/pipeline";\nexport default pipeline({ name: "tf-apply", stages: [{ name: "dev", waves: [{ name: "wave-1", runs: [{ target: "envs/dev/net" }] }], gate: { policy: "never" } }, { name: "prod", waves: [{ name: "wave-1", runs: [{ target: "envs/prod/net" }] }], gate: { policy: "${gate}" }${extra} }] });\n`;
+    write(repo, { ".chant/pipeline.ts": pipeline("never") });
+    git(repo, "add", "-A");
+    commit();
+    expect(releaseApproval(repo, "prod", settings)).toEqual({ refused: expect.stringMatching(/sets prod's gate to never/) });
+    write(repo, { ".chant/pipeline.ts": pipeline("always", ", pauseAfterRollback: true") });
+    git(repo, "add", "-A");
+    commit();
+    expect(releaseApproval(repo, "prod", settings)).toEqual({ via: "stage", pauseAfterRollback: true });
+    // Components that carry prod's gate take it there, pipeline or not.
+    write(repo, { [PROMOTION_COMPONENTS]: promotionComponentsText({ ...plan, componentGated: ["prod"] }, ["dev", "prod"]) });
+    expect(releaseApproval(repo, "prod", settings)).toEqual({ via: "component" });
+  });
+
+  it("roll back into a stage the pipeline gates as a promote of the earlier release, through the stage's gate", () => {
+    expect(stageRollbackArgv(releaseArgv("rollback", { args: ["prod"], flags: { release: "r1", "dry-run": true } }))).toEqual(["components", "promote", "--to", "prod", "--release", "r1", "--dry-run"]);
   });
 
   it("print the release gate's approve line", () => {
@@ -257,7 +344,7 @@ describe.skipIf(!hasTofu || !existsSync(DIST))("a release through dev and stagin
 
     execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
     write(repo, {
-      "terragucci.yml": "forge: github\nbinary: tofu\nenvironments:\n  dev: { roots: [\"envs/dev/**\"], gate: never }\n  staging: { roots: [\"envs/staging/**\"], gate: always }\n  prod: { roots: [\"envs/prod/**\"], gate: always }\npromotion: [dev, staging, prod]\n",
+      "terragucci.yml": "forge: github\nbinary: tofu\nenvironments:\n  dev: { roots: [\"envs/dev/**\"], gate: never }\n  staging: { roots: [\"envs/staging/**\"], gate: always, pause_after_rollback: true }\n  prod: { roots: [\"envs/prod/**\"], gate: always }\npromotion: [dev, staging, prod]\n",
       "envs/dev/net/main.tf": root("dev", "v1"),
       "envs/staging/net/main.tf": root("staging", "v1"),
       "envs/prod/net/main.tf": root("prod", "v1"),
@@ -289,9 +376,11 @@ describe.skipIf(!hasTofu || !existsSync(DIST))("a release through dev and stagin
     expect(skip.out).toMatch(/--allow-skip/);
     expect(value("prod")).toBeUndefined();
 
-    // staging waits at its gate, and nothing applies until the release gate is approved.
+    // init wrote .chant/pipeline.ts beside the components: staging waits once, at its stage gate, and nothing applies until it is approved.
+    expect(existsSync(join(repo, ".chant/pipeline.ts"))).toBe(true);
     const waiting = run("node", "promote", "--to", "staging", "--release", "r1");
     expect(waiting.code, waiting.out).toBe(3);
+    expect(waiting.out).toContain("tf-apply staging waits for an approval of");
     expect(waiting.out).toContain("terragucci approve release staging");
     expect(value("staging")).toBeUndefined();
     expect(run("node", "approve", "release", "staging").code).toBe(0);
@@ -314,18 +403,26 @@ describe.skipIf(!hasTofu || !existsSync(DIST))("a release through dev and stagin
     expect(run("node", "promote", "--to", "staging", "--release", "r2").code).toBe(0);
     expect(value("staging")).toBe("net-staging-v2");
 
-    // Roll staging back to r1, behind the same gate.
-    expect(run("node", "rollback", "staging", "--release", "r1").code).toBe(3);
+    // Roll staging back to r1, behind the same gate: the stage's, once.
+    const rollbackWaits = run("node", "rollback", "staging", "--release", "r1");
+    expect(rollbackWaits.code, rollbackWaits.out).toBe(3);
+    expect(rollbackWaits.out).toContain("tf-apply staging waits for an approval of");
     expect(value("staging")).toBe("net-staging-v2");
     expect(run("node", "approve", "release", "staging").code).toBe(0);
     const back = run("node", "rollback", "staging", "--release", "r1");
     expect(back.code, back.out).toBe(0);
     expect(value("staging")).toBe("net-staging-v1");
     expect(value("dev")).toBe("net-dev-v2");
+    // pause_after_rollback: the rollback paused staging, so a promote into it waits until the stage is resumed.
+    expect(back.out).toContain("paused stage staging");
+    const paused = run("node", "promote", "--to", "staging", "--release", "r2");
+    expect(paused.code, paused.out).toBe(3);
+    expect(paused.out).toMatch(/paused/);
+    expect(value("staging")).toBe("net-staging-v1");
   }, 300_000);
 
-  // terragucci#1532: with .chant/pipeline.ts, `terragucci approve release <env>` answers the stage's gate the promote stops at.
-  it("with the pipeline terragucci ci writes, approve release answers the gate staging waits at", () => {
+  // terragucci#1532: with .chant/pipeline.ts a stage is approved once, at its gate, which `terragucci approve release <env>` answers.
+  it("with the pipeline terragucci ci writes, a promote into staging and then prod waits once, at the stage's gate", () => {
     const repo = tmp("terragucci-promote-pipeline-");
     const origin = tmp("terragucci-promote-pipeline-origin-");
     const env = { ...process.env, CHANT_ACTOR: "tester", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", NO_COLOR: "1" };
@@ -363,24 +460,31 @@ describe.skipIf(!hasTofu || !existsSync(DIST))("a release through dev and stagin
     const dev = run("chant", "run", "--components", "all", "--env", "dev", "--release", "r1");
     expect(dev.code, dev.out).toBe(0);
 
-    // The promote stops first at the stage's gate, tf-apply staging, and names approve release for it.
+    // One approval per stage: the promote stops at the stage's gate, tf-apply staging, and names approve release for it.
     const waiting = run("node", "promote", "--to", "staging", "--release", "r1");
     expect(waiting.code, waiting.out).toBe(3);
     expect(waiting.out).toContain("tf-apply staging waits for an approval of");
     expect(waiting.out).toContain("terragucci approve release staging");
+    expect(value("pstaging")).toBeUndefined();
     const stage = run("node", "approve", "release", "staging");
     expect(stage.code, stage.out).toBe(0);
     expect(stage.out).toContain("running: chant approve tf-apply staging --env staging");
-    // Past the stage's gate, the components' release gate binds the change set the promote planned.
-    const planned = run("node", "promote", "--to", "staging", "--release", "r1");
-    expect(planned.code, planned.out).toBe(3);
-    expect(planned.out).toContain("stage staging: tf-apply staging approved by");
-    expect(value("pstaging")).toBeUndefined();
-    const release = run("node", "approve", "release", "staging");
-    expect(release.code, release.out).toBe(0);
-    expect(release.out).toContain("running: chant approve release staging --env staging");
+    // That one approval lets the same promote through: the components carry no gate of their own.
     const promoted = run("node", "promote", "--to", "staging", "--release", "r1");
     expect(promoted.code, promoted.out).toBe(0);
+    expect(promoted.out).toContain("stage staging: tf-apply staging approved by");
     expect(value("pstaging")).toBe("net-staging-v1");
+
+    // prod does the same.
+    const prodWaits = run("node", "promote", "--to", "prod", "--release", "r1");
+    expect(prodWaits.code, prodWaits.out).toBe(3);
+    expect(prodWaits.out).toContain("tf-apply prod waits for an approval of");
+    expect(value("pprod")).toBeUndefined();
+    const prodStage = run("node", "approve", "release", "prod");
+    expect(prodStage.code, prodStage.out).toBe(0);
+    expect(prodStage.out).toContain("running: chant approve tf-apply prod --env prod");
+    const prod = run("node", "promote", "--to", "prod", "--release", "r1");
+    expect(prod.code, prod.out).toBe(0);
+    expect(value("pprod")).toBe("net-prod-v1");
   }, 300_000);
 });

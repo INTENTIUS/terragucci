@@ -32,10 +32,18 @@
  *
  * A rule's `roots` is chant's `targets`, as in the top-level `approval_rules`.
  *
- * `terragucci ci` writes the file with chant's `pipelineSource`, and
- * `terragucci ci --check` fails with chant's `checkPipelineFile` when the
- * committed file is not the one the config writes now. With no `promotion`,
- * no file is written: the pipeline is off until a config sets it.
+ * `terragucci init` writes the file beside the components it writes, and
+ * `terragucci ci` writes it again on its own, both with chant's
+ * `pipelineSource`; `terragucci ci --check` fails with chant's
+ * `checkPipelineFile` when the committed file is not the one the config
+ * writes now. With no `promotion`, no file is written: the pipeline is off
+ * until a config sets it.
+ *
+ * Each stage's gate is the one approval a promote into it takes
+ * (`pipelineGatedStages`): `terragucci init` writes no component gate for an
+ * environment the pipeline gates, and `terragucci promote` and `rollback`
+ * check the pipeline chant reads gates that environment before they deploy
+ * (`stageGateAtBase`).
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,6 +56,7 @@ import {
   pipelineSource,
   laterStageRisk,
   laterStageRiskLines,
+  promoteBase,
   readPipelineAt,
   stageWavesSpec,
   writePipelineFile,
@@ -63,7 +72,7 @@ import type { OpWaveHolds, OpWaveHook, OpWaveHooks } from "@intentius/chant/op";
 import { environmentSetsProblems, type EnvironmentSet, type EnvironmentSets } from "@intentius/chant/components";
 import { globMatch } from "./detect";
 import { WAVES_OP, WAVES_SPEC, waveName } from "./chant-waves";
-import { approvalModeOf, ConfigError, ENVIRONMENT_STAGE_KEYS, normalizeGate, type ApprovalRuleSettings, type EnvironmentSetSettings, type ProjectSettings, type RiskSettings, type StageApprovalRule } from "./config";
+import { approvalModeOf, ConfigError, ENVIRONMENT_STAGE_KEYS, normalizeGate, type ApprovalRuleSettings, type Gate, type EnvironmentSetSettings, type ProjectSettings, type RiskSettings, type StageApprovalRule } from "./config";
 import { environmentOf, topGate } from "./environments";
 
 /** The bin the release cut and the artifacts publish run as on the merge path: `terragucci release cut`, `terragucci pipeline artifacts publish`. */
@@ -187,28 +196,88 @@ function pipeline(declaration: PipelineDeclaration): PipelineDeclaration {
   return declaration;
 }
 
+/** The waves spec's text as the pipeline reads it: its `waves` and its `step`. */
+type WavesSpecFile = { waves?: { runs?: { target: string }[]; discover?: unknown }[]; step?: unknown };
+
+/** The step a waves spec's text plans and applies through, which each stage's waves take (`defaults.step`). */
+export function specStep(text: string): Record<string, unknown> | undefined {
+  const step = (JSON.parse(text) as WavesSpecFile).step;
+  return step && typeof step === "object" ? (step as Record<string, unknown>) : undefined;
+}
+
+/** The merge path's waves as a waves spec's text lists their roots, or why they cannot be read. */
+export function specLayers(text: string): string[][] {
+  const spec = JSON.parse(text) as WavesSpecFile;
+  if (!Array.isArray(spec.waves) || spec.waves.some((w) => w.discover)) throw new ConfigError(`promotion: ${WAVES_SPEC} lists waves found at plan time, and a stage needs its roots named; promotion takes plain roots`);
+  return spec.waves.map((w) => (w.runs ?? []).map((r) => r.target));
+}
+
 /** The step the committed waves spec plans and applies through, which each stage's waves take (`defaults.step`). */
 export function committedStep(repo: string): Record<string, unknown> | undefined {
   const path = join(repo, WAVES_SPEC);
-  if (!existsSync(path)) return undefined;
-  const step = (JSON.parse(readFileSync(path, "utf-8")) as { step?: unknown }).step;
-  return step && typeof step === "object" ? (step as Record<string, unknown>) : undefined;
+  return existsSync(path) ? specStep(readFileSync(path, "utf-8")) : undefined;
 }
 
 /** The merge path's waves as the committed waves spec lists their roots, or why it cannot be read. */
 export function committedLayers(repo: string): string[][] {
   const path = join(repo, WAVES_SPEC);
   if (!existsSync(path)) throw new ConfigError(`${WAVES_SPEC} is missing; run terragucci init first, which writes the waves each stage is cut from`);
-  const spec = JSON.parse(readFileSync(path, "utf-8")) as { waves?: { runs?: { target: string }[]; discover?: unknown }[] };
-  if (!Array.isArray(spec.waves) || spec.waves.some((w) => w.discover)) throw new ConfigError(`promotion: ${WAVES_SPEC} lists waves found at plan time, and a stage needs its roots named; promotion takes plain roots`);
-  return spec.waves.map((w) => (w.runs ?? []).map((r) => r.target));
+  return specLayers(readFileSync(path, "utf-8"));
 }
 
 /** The text of `.chant/pipeline.ts` for `settings`, or undefined with no `promotion`. */
 export function pipelineText(repo: string, settings: ProjectSettings): string | undefined {
   if (!settings.promotion?.length) return undefined;
-  const declaration = pipelineDeclaration(settings, committedLayers(repo), committedStep(repo));
+  const layers = committedLayers(repo);
+  return pipelineTextFromSpec(settings, readFileSync(join(repo, WAVES_SPEC), "utf-8"), layers);
+}
+
+/** The text of `.chant/pipeline.ts` for `settings` cut from the waves spec `specText`, as init writes it beside that spec; undefined with no `promotion`. */
+export function pipelineTextFromSpec(settings: ProjectSettings, specText: string, layers: string[][] = specLayers(specText)): string | undefined {
+  if (!settings.promotion?.length) return undefined;
+  const declaration = pipelineDeclaration(settings, layers, specStep(specText));
   return declaration ? pipelineSource(declaration, SOURCE_OPTIONS) : undefined;
+}
+
+/** The first line of a `.chant/pipeline.ts` terragucci wrote, from chant's `pipelineSource`. */
+export const PIPELINE_MARKER = `// Written by ${SOURCE_OPTIONS.product} from ${SOURCE_OPTIONS.config}.`;
+
+/** Whether `text` is a `.chant/pipeline.ts` terragucci wrote. */
+export const pipelineWrittenByTerragucci = (text: string): boolean => text.startsWith(PIPELINE_MARKER);
+
+/** The gate `.chant/pipeline.ts` gives `stage`: its environment's gate, else the top-level one, as pipelineDeclaration hands them to chant. */
+export function stageGatePolicy(settings: Pick<ProjectSettings, "environments" | "gate">, stage: string): Gate {
+  return normalizeGate(settings.environments?.[stage]?.gate) ?? topGate(settings);
+}
+
+/**
+ * The stages of `promotion` whose gate in the pipeline terragucci.yml writes
+ * waits for a person: each whose gate is not `never`. chant's promote waits
+ * at such a stage's gate whether it is `always` or `on-destructive`, since a
+ * promote has no plan to call destructive before it is gated.
+ */
+export function pipelineGatedStages(settings: Pick<ProjectSettings, "promotion" | "environments" | "gate">): string[] {
+  return (settings.promotion ?? []).filter((stage) => stageGatePolicy(settings, stage) !== "never");
+}
+
+/**
+ * Whether the pipeline a promote into `stage` reads gates it: chant reads
+ * `.chant/pipeline.ts` at the default branch's tip (`promoteBase`), so this
+ * reads it there too. `gated` with the stage's `pauseAfterRollback`, or why
+ * the stage's gate is not there: no pipeline at that commit, one that does
+ * not fold, one with no such stage, or a stage whose gate is `never`.
+ */
+export function stageGateAtBase(repo: string, stage: string): { gated: true; pauseAfterRollback: boolean } | { gated: false; why: string } {
+  const base = promoteBase(repo);
+  if (!base) return { gated: false, why: "the repo has no commit to read .chant/pipeline.ts at" };
+  const at = `${PIPELINE_FILE} at ${base.slice(0, 12)}`;
+  const read = readPipelineAt(base, repo);
+  if (read.status === "absent") return { gated: false, why: `there is no ${at}` };
+  if (read.status === "refused") return { gated: false, why: `${at} does not fold: ${read.line}` };
+  const found = read.spec.stages.find((s) => s.name === stage);
+  if (!found) return { gated: false, why: `${at} has no stage ${stage}` };
+  if (found.gate?.policy === "never") return { gated: false, why: `${at} sets ${stage}'s gate to never` };
+  return { gated: true, pauseAfterRollback: found.pauseAfterRollback === true };
 }
 
 /**

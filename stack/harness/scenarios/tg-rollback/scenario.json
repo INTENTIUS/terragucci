@@ -109,7 +109,7 @@
     {
       "id": "approve-r1",
       "do": "out-of-band",
-      "label": "the reviewer approves staging's release gate",
+      "label": "the reviewer approves staging's gate",
       "command": [
         "stack/harness/check.sh",
         "release",
@@ -237,7 +237,7 @@
     {
       "id": "approve-r2",
       "do": "out-of-band",
-      "label": "the reviewer approves staging's release gate",
+      "label": "the reviewer approves staging's gate",
       "command": [
         "stack/harness/check.sh",
         "release",
