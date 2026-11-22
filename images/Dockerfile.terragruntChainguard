@@ -13,8 +13,8 @@ ENV npm_config_logs_max=0
 ENV CHANT_IMAGE_USER=65532
 RUN apk add --no-cache git=2.56.1-r1 ca-certificates=20261020-r0 || { echo "apk add failed. If Wolfi no longer serves a pinned version, move the pin: a newer chant moves its own (WOLFI_PACKAGE_PINS), and chant release images --repin <file> moves an apk:<name>=<version> entry in your source; then render this Dockerfile again." >&2; exit 1; } && mkdir -p /usr/local/bin
 RUN git config --system --add safe.directory '*'
-RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @intentius/chant@0.124.112 @cdktn/hcl2json@0.24.0 && npm cache clean --force && rm -rf /tmp/.npm
-RUN cd /tmp && npm pack --silent @intentius/chant@0.124.112 && tar -xzf intentius-chant-0.124.112.tgz package/dist/wave-runtime.mjs && install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs && printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant && rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force && rm -rf /tmp/.npm
+RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @intentius/chant@0.124.114 @cdktn/hcl2json@0.24.0 && npm cache clean --force && rm -rf /tmp/.npm
+RUN cd /tmp && npm pack --silent @intentius/chant@0.124.114 && tar -xzf intentius-chant-0.124.114.tgz package/dist/wave-runtime.mjs && install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs && printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant && rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force && rm -rf /tmp/.npm
 COPY --from=fetch /opt/terragucci/ /opt/terragucci/
 RUN ln -sf /opt/terragucci/tofu-1.13.1/tofu /usr/local/bin/tofu && ln -sf /opt/terragucci/terragrunt-1.2.0/terragrunt /usr/local/bin/terragrunt
 RUN mkdir -p /opt/terragucci && chown 65532:65532 /opt/terragucci
