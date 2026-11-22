@@ -20,24 +20,18 @@
  *                                          .gitlab-ci.yml includes): the drift
  *                                          job, and with agent.drift the agent
  *                                          and push jobs, which run when the
- *                                          drift job's `drift` output is
- *                                          true, and terragucci's
- *                                          drift-found job
+ *                                          drift job exits with chant's
+ *                                          `drift` code
  *   ops/terragucci-drift.op.ts             a TerraformWatchOp per root of a
  *                                          plain repo, so `chant run
  *                                          terragucci-drift-<root>` reads one
  *                                          root by hand
  *
  * The Op runs every root in one job, as before, since the repo keeps one
- * drift issue. With agent.drift, when the run opened the drift issue, the
- * script writes `drift=true` to its step's outputs itself and exits 0, and
- * the drift-found job after it exits with chant's `drift` code (2), so the
- * run stays red on drift (terragucci#1528). Forgejo's runner publishes a
- * job's outputs only when the job succeeds, so a drift job that exited 2
- * handed the agent jobs no `drift` output and no drift, and they were
- * skipped. Without agent.drift the run stays green on drift as
- * terragucci's own job did. The drift agent's runs go on the ledger under
- * op `terragucci-drift`.
+ * drift issue. With agent.drift the script exits with chant's `drift` code
+ * (2) when the run opened the drift issue; without it, the run stays green
+ * on drift as terragucci's own job did. The drift agent's runs go on the
+ * ledger under op `terragucci-drift`.
  *
  * On GitLab the Op's job carries the drift stage's id_tokens, a Terragrunt
  * repo's cache and terragucci's schedule rule (`gitlab` on the spec, chant
@@ -67,57 +61,9 @@ export const CHANT_DRIFT_GITLAB_STAGE = "drift";
 /** chant's `drift` exit code (chant#4553), which starts the drift agent's jobs. */
 export const CHANT_DRIFT_EXIT = 2;
 
-/** The script's lines on chant's Op that mark drift: rc becomes `drift` when this run opened the drift issue (DRIFT_ISSUE_JS's `agent=1`). */
+/** The script's last lines on chant's Op: exit `drift` when this run opened the drift issue (DRIFT_ISSUE_JS's `agent=1`). */
 export function chantDriftExitLines(issueJs: string, issueFile: string): string[] {
   return [`if [ "$rc" -eq 0 ] && node -e '${issueJs}' ${issueFile} | grep -qx 'agent=1'; then rc=${CHANT_DRIFT_EXIT}; fi`];
-}
-
-/**
- * The script's lines before its exit on chant's Op (terragucci#1528): on
- * `drift`, `drift=true` goes to the step's outputs, which chant's job maps
- * to its `drift` output, and the script exits 0, so the job succeeds and
- * Forgejo publishes its outputs. The drift-found job carries the red run.
- */
-export function chantDriftHandOnLines(): string[] {
-  return [`if [ "$rc" -eq ${CHANT_DRIFT_EXIT} ]; then echo "drift=true" >>"\${GITHUB_OUTPUT:-/dev/null}"; rc=0; fi`];
-}
-
-/** The job after the drift job that fails the run when the drift job found drift (terragucci#1528). */
-export const CHANT_DRIFT_FOUND_JOB = `${CHANT_DRIFT_OP}-found`;
-
-/**
- * The drift-found job, appended to chant's workflow: it needs the drift
- * job, runs when its `drift` output is true, on the drift job's runner,
- * and exits with chant's `drift` code, so a run that found drift is red
- * while the agent jobs run beside it. Undefined when the workflow's shape
- * is not the one it appends to: `jobs:` as the last top-level key, with
- * the drift job's `runs-on:` in it.
- */
-export function chantDriftFoundJob(yaml: string): string | undefined {
-  const lines = yaml.replace(/\n+$/, "").split("\n");
-  const jobsAt = lines.indexOf("jobs:");
-  if (jobsAt < 0 || lines.slice(jobsAt + 1).some((l) => /^\S/.test(l))) return undefined;
-  const start = lines.indexOf(`  ${CHANT_DRIFT_OP}:`, jobsAt);
-  if (start < 0) return undefined;
-  let end = start + 1;
-  while (end < lines.length && !/^ {2}\S/.test(lines[end]!)) end++;
-  const job = lines.slice(start + 1, end);
-  const at = job.findIndex((l) => /^ {4}runs-on:/.test(l));
-  if (at < 0) return undefined;
-  let stop = at + 1;
-  while (stop < job.length && /^ {5,}\S/.test(job[stop]!)) stop++;
-  const runsOn = job.slice(at, stop);
-  return [
-    `  ${CHANT_DRIFT_FOUND_JOB}:`,
-    `    needs: ${CHANT_DRIFT_OP}`,
-    `    if: needs.${CHANT_DRIFT_OP}.outputs.drift == 'true'`,
-    ...runsOn,
-    "    steps:",
-    "      - name: Fail the run on drift",
-    "        run: |-",
-    `          echo "terragucci: the drift run found drift; the drift issue lists it, and the drift agent's jobs answer it"`,
-    `          exit ${CHANT_DRIFT_EXIT}`,
-  ].join("\n");
 }
 
 /** One root's Op name: `terragucci-drift-<root>`, the root's path in kebab case. */
@@ -203,12 +149,6 @@ export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob = CHANT
     chant.setActiveProductWords(was as object | undefined);
   }
   if (!yaml) return undefined;
-  // With the drift agent, the drift job succeeds on drift so its outputs reach the agent jobs, and this job keeps the run red (terragucci#1528).
-  if (agent) {
-    const found = chantDriftFoundJob(yaml);
-    if (!found) throw new Error(`chant's drift workflow has no ${CHANT_DRIFT_OP} job with runs-on under a last jobs key, so terragucci cannot add ${CHANT_DRIFT_FOUND_JOB} after it`);
-    yaml = `${yaml.replace(/\n+$/, "")}\n${found}\n`;
-  }
   const header = `${i.marker} The drift job is a chant drift Op (terragucci#1305), from ${CHANT_DRIFT_SPEC_FILE}: edit terragucci.yml's drift${i.agent ? " and agent.drift" : ""} and run terragucci init.\n`;
   return [
     { path: CHANT_DRIFT_SCRIPT_FILE, content: `#!/usr/bin/env bash\n${i.marker}\n${i.script}\n` },

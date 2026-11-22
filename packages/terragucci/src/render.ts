@@ -202,7 +202,7 @@ import { driftWatch } from "./report/overdue";
 import type { AgentCommentInput, AgentScheduleInput, AgentTriggerInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { chantFactsFiles, waveAgentFacts } from "./render-chant-agent-triggers";
-import { CHANT_DRIFT_EXIT, chantDriftExitLines, chantDriftFiles, chantDriftHandOnLines, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
+import { CHANT_DRIFT_EXIT, chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { commentLine, productPipelineJobs, type CiProductCommand, type WaveSummarySpec } from "@intentius/chant/ci-product";
@@ -1326,8 +1326,6 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
     // The drift pull request: a person reviews and merges it, or closes it.
     ...(pullRequest ? [...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`] : []),
-    // On drift the step's `drift` output starts the agent jobs and the job succeeds, since Forgejo publishes no outputs from a failed job; the drift-found job fails the run (terragucci#1528).
-    ...(agent === "chant" ? chantDriftHandOnLines() : []),
     ...(pullRequest || notify || agent ? ['exit "$rc"'] : []),
   ].join("\n");
 }
