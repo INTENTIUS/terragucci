@@ -807,7 +807,7 @@ terragucci drift-agent show --report <dir>
 terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
 ```
 
-Two generated jobs, `drift-agent` and `drift-agent-push`, run the halves of the [drift agent](/terragucci/guides/agent-fix-drift/).
+The [drift agent](/terragucci/guides/agent-fix-drift/)'s jobs are chant's `terragucci-drift-agent` and `terragucci-drift-agent-push`, in `terragucci-drift.yml`. The drift script runs `drift-agent show`; `prompt` and `push` run in a job you write.
 
 | Command | Does |
 |---|---|
