@@ -23,11 +23,15 @@ import type { GatedRequestRead } from "@intentius/chant/lifecycle/gated-request"
 import type { OpRunRecord } from "@intentius/chant/op";
 import { TOOL_VERSIONS } from "../../packages/terragucci/src/images";
 import { bareVersion, parseClaimsTable, smokeRows, smokeScenario, type ClaimRunLike } from "./rows";
+import { harnessStateDir, stackStateDir } from "./state";
 import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath } from "./scenarios";
 
 const HERE = import.meta.dirname;
 const ROOT = resolve(HERE, "..", "..");
-const STATE = process.env.TG_STATE || join(ROOT, "stack", ".state");
+/** The harness's own work (scenario bases, scratch, the claims ledger): the caller's TG_STATE. */
+const STATE = harnessStateDir(ROOT);
+/** The stack's files (forgejo.env), where stack-up wrote them whatever TG_STATE the caller set. */
+const STACK_STATE = stackStateDir(ROOT);
 const CLAIMS_JSON = join(ROOT, "stack", "evidence", "e2e-claims.json");
 
 /** The exit code when the no-real-cloud scan found a public cloud answering: nothing is recorded. */
@@ -167,7 +171,7 @@ async function lint(args: string[]): Promise<number> {
 
 /** forgejo.env as bootstrap.sh wrote it. */
 function forgejoEnv(): Record<string, string> {
-  const file = join(STATE, "forgejo.env");
+  const file = join(STACK_STATE, "forgejo.env");
   if (!existsSync(file)) throw new Error(`no ${file}; run 'just stack-up forgejo' first`);
   const env: Record<string, string> = {};
   for (const line of readFileSync(file, "utf8").split("\n")) {
