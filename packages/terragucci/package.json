@@ -25,6 +25,7 @@
   "files": [
     "dist",
     "workspace-kinds.json",
+    "sbom.spdx.json",
     "README.md",
     "LICENSE"
   ],
