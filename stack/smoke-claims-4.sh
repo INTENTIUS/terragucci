@@ -2571,6 +2571,8 @@ SH
     awk '/^  terragucci-drift-agent:/ { job = 1 } /^  terragucci-drift-agent-push:/ { job = 0 } job && /^ +AGENT_KEY: / { match($0, /^ */); print substr($0, 1, RLENGTH) "AGENT_KEY: ${{ secrets.AGENT_TOKEN }}"; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
     grep -q 'AGENT_KEY: \${{ secrets.AGENT_TOKEN }}' "$wf" || { log "could not give the agent's command the token"; drop_work "$work"; return 1; }
   fi
+  # The gate policy is read at HEAD^1, so the push to main needs a parent: a base commit first, with no run.
+  push_tree "$work/tree" "$repo" main "drift-agent: the base [skip ci]" >/dev/null || { drop_work "$work"; return 1; }
   main_sha="$(push_tree "$work/tree" "$repo" main "drift-agent: a queue with a timeout of 30")" || { drop_work "$work"; return 1; }
   curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
   wait_run "$repo" "$main_sha" || { drop_work "$work"; return 1; }
