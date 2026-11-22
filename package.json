@@ -11,7 +11,7 @@
     "lint-docs": "node scripts/lint-docs.mjs"
   },
   "devDependencies": {
-    "@intentius/chant": "0.124.114",
+    "@intentius/chant": "0.124.115",
     "@intentius/chant-lexicon-aws": "0.124.106",
     "@intentius/chant-lexicon-docker": "0.124.102",
     "@intentius/chant-lexicon-github": "0.124.103",

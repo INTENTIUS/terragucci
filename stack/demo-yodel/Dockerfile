@@ -105,7 +105,7 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
 # which changes with nearly every terragucci commit, and a stage FROM it would
 # fetch and install chant again each time although CHANT_VERSION and CHANT_REF
 # did not move. npm's download cache is a BuildKit cache mount.
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS chant-report
+FROM node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS chant-report
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 ARG CHANT_VERSION
 ARG CHANT_REF
