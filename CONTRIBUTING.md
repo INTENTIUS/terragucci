@@ -98,6 +98,14 @@ The trusted publisher is configured once, on npmjs.com, in the settings of `@int
 
 The fields are case-sensitive, and `repository.url` in `packages/terragucci/package.json` must match the repository exactly. Renaming the workflow file breaks publishing until the setting is changed too. npm expires a new trusted publisher configuration that has not published within 2 days, so configure it shortly before a release. Once it works, the package's publishing access can be set to require two-factor authentication and disallow tokens, which leaves this workflow as the only way to publish. npm's reference: https://docs.npmjs.com/trusted-publishers.
 
+### The release scan's VEX statement
+
+The scan before the cut blocks a critical finding that has a fix. `security/vex/tofu-1.13.9-x-net.openvex.json`, which `vulnPolicy.vexSources` in `chant.config.ts` names, is an OpenVEX statement that GO-2026-6612 (CVE-2026-78663) does not affect the `tofu` and `terragrunt` images. The finding is in `golang.org/x/net` v0.57.0 as compiled into the upstream OpenTofu 1.13.9 binary those images install. The advisory's double flow-control refund is in x/net's own HTTP/2 server, `http2/server.go`. OpenTofu 1.13.9 is built with Go 1.27.3, and on Go 1.27 x/net v0.57.0 does not compile that file. Its `http2.Server` wraps net/http's server instead, which Go 1.27.2 fixed. No OpenTofu release is built with x/net v0.60.0, where the fix landed, so the finding cannot be fixed by moving the pin yet. The pull request that added the file has the evidence.
+
+The statement names one advisory in one binary. Every other finding, the High x/net advisories among them, goes through the policy as before. chant matches a statement to a finding by advisory id alone, in every image the release scans, so a GO-2026-6612 finding in another image would be cleared too. Read the scan's suppressed list when an engine moves.
+
+Delete the file and its `vexSources` entry when `TOOL_VERSIONS.tofu` moves to an OpenTofu release built with `golang.org/x/net` v0.60.0 or later (`go version -m tofu` on the release binary prints it). `test/vex.test.ts` fails when the pin moves while the file still names 1.13.9. If the new release still carries an affected x/net, check the claim again for that binary before you change the statement.
+
 ## Workflows
 
 Every workflow in this repo is a chant declaration. The YAML is rendered from it and committed, because GitHub reads YAML from the default branch.

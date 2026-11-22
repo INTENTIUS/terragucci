@@ -32,6 +32,13 @@ export default {
   // the environments a gate names, chant components) leaves them out.
   exclude: ["stack/harness/scenarios"],
 
+  // The release scan (supply-chain) keeps chant's default policy. The one VEX file records GO-2026-6612 as not affected
+  // in OpenTofu 1.13.9's golang.org/x/net v0.57.0, whose HTTP/2 server code that release does not compile in
+  // (CONTRIBUTING.md, The release scan's VEX statement). test/vex.test.ts fails when the OpenTofu pin moves past it.
+  vulnPolicy: {
+    vexSources: ["security/vex/tofu-1.13.9-x-net.openvex.json"],
+  },
+
   // The release (CONTRIBUTING.md, Releasing): chant's cut builds the four CI images in each of two sets, Debian and
   // Chainguard, as OCI archives and records their digests, the bundle pins them (scripts/build-cli.mjs reads
   // CHANT_RELEASE_DIGESTS), and chant's publish pushes the images, publishes the package and
