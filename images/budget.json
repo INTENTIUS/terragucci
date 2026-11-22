@@ -3,8 +3,8 @@
   "terraform": 585000000,
   "terragrunt": 667000000,
   "choudoufu": 666000000,
-  "tofu-chainguard": 580000000,
-  "terraform-chainguard": 585000000,
-  "terragrunt-chainguard": 667000000,
-  "choudoufu-chainguard": 666000000
+  "tofu-chainguard": 1004000000,
+  "terraform-chainguard": 1007000000,
+  "terragrunt-chainguard": 1092000000,
+  "choudoufu-chainguard": 1091000000
 }
