@@ -60,7 +60,7 @@
     {
       "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json",
       "break": "caught",
-      "chant": "0.124.113",
+      "chant": "0.124.114",
       "claim": "release/promote",
       "contract": 1,
       "date": "2026-11-22",
@@ -71,14 +71,14 @@
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
       "plain": "fail",
       "product": "terragucci",
-      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
+      "productCommit": "906cb8d4224b8f74ac15ebb3bffc51addfd47b88",
       "safeRun": "CLEAN",
       "scenario": "tg-promote"
     },
     {
       "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json",
       "break": "caught",
-      "chant": "0.124.113",
+      "chant": "0.124.114",
       "claim": "release/rollback",
       "contract": 1,
       "date": "2026-11-22",
@@ -89,7 +89,7 @@
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
       "plain": "fail",
       "product": "terragucci",
-      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
+      "productCommit": "906cb8d4224b8f74ac15ebb3bffc51addfd47b88",
       "safeRun": "CLEAN",
       "scenario": "tg-rollback"
     },
@@ -114,7 +114,7 @@
     {
       "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json",
       "break": "caught",
-      "chant": "0.124.113",
+      "chant": "0.124.114",
       "claim": "pipeline/dev-staging-prod",
       "contract": 1,
       "date": "2026-11-22",
@@ -125,7 +125,7 @@
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
       "plain": "fail",
       "product": "terragucci",
-      "productCommit": "60c5292b6f90063888fdbe56cb29304c736f5ed8",
+      "productCommit": "906cb8d4224b8f74ac15ebb3bffc51addfd47b88",
       "safeRun": "CLEAN",
       "scenario": "tg-stage-promote"
     },
