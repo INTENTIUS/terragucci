@@ -176,7 +176,11 @@ unpin_images() { # dir
   done
 }
 
-# One commit of DIR, force-pushed. The message carries a timestamp, so every
+# A first push puts a base commit of the same tree under the one it pushes, so
+# the apply wave has a HEAD^1 to read its gate policy at.
+export PUSH_BASE="${PUSH_BASE-The base the first apply reads its gate policy at}"
+
+# One commit of DIR (on its base commit, the first time), force-pushed. The message carries a timestamp, so every
 # push has a new sha.
 push_dir() { # dir remote branch message
   (
@@ -185,6 +189,11 @@ push_dir() { # dir remote branch message
     git checkout -q -B "$3"
     [ -n "${TG_KEEP_DIGESTS:-}" ] || unpin_images .
     git add -A
+    # An apply wave reads its gate policy at HEAD^1, which a first commit lacks
+    # (#1547): PUSH_BASE commits the tree under the commit this call pushes.
+    if [ -n "${PUSH_BASE:-}" ] && ! git rev-parse -q --verify HEAD >/dev/null; then
+      git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "$PUSH_BASE"
+    fi
     git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q --allow-empty -m "$4"
     local out
     if ! out="$(git push -q --force "$2" "HEAD:refs/heads/$3" 2>&1)"; then

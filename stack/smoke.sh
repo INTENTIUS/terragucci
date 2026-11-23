@@ -480,6 +480,12 @@ say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 [ "${1:-}" = --list ] || { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; } \
   || { echo "SKIP: Docker is not available, so no claim can run."; exit 0; }
 
+# A pipeline's apply wave reads its gate policy at HEAD^1, which a fresh repo's
+# first commit lacks (#1541, #1547). Every claim's first push of a tree commits
+# the tree under a base commit and pushes both: lib.sh's push_tree and
+# smoke-gitlab.sh's gl_push read PUSH_BASE, and only when the tree has no commit.
+export PUSH_BASE="${PUSH_BASE-The base the first apply reads its gate policy at}"
+
 # The claims, in four parts that stay under the 512 KB lfs-check allows a blob.
 # shellcheck source=smoke-claims-1.sh
 . "$HERE/smoke-claims-1.sh"
