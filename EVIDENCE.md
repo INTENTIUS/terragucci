@@ -362,7 +362,7 @@ One row per claim. The result is the weakest of its runs. Where it runs lists ev
 
 ### Setup and runtime
 
-47 claims.
+48 claims.
 
 | Claim | What it checks | Where it runs | Result |
 |---|---|---|---|
@@ -387,6 +387,7 @@ One row per claim. The result is the weakest of its runs. Where it runs lists ev
 | `init/atmos-refuse` | config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances | Forgejo | proven |
 | `init/atmos-version` | atmos.version in terragucci.yml is the Atmos release every job installs | Forgejo | proven |
 | `init/cdktn-refuse` | with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request | Forgejo | proven |
+| `init/chainguard-job` | with image.base: chainguard, init names the -chainguard image, and a Forgejo container job in it runs as user 65532: its checkout, git, writes in the workspace and $HOME, an install of an engine the image lacks and a plan all work | Forgejo | proven |
 | `init/config-ts` | init writes the pipeline from a terragucci.ts folded as data, and config check refuses a terragucci.ts that reads process.env at its line | Forgejo | proven |
 | `init/env` | with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state | Forgejo | proven |
 | `init/foreign-checkout` | a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches | Forgejo | proven |
