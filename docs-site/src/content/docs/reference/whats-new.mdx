@@ -1,16 +1,24 @@
 ---
-title: Changes in 0.4.65
-description: "terragucci 0.4.65, released 2026-11-22."
+title: Changes in 0.4.66
+description: "terragucci 0.4.66, released 2026-11-23."
 ---
 
-Release `0.4.65` is on npm as `@intentius/terragucci@0.4.65`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.65) lists every change.
+Release `0.4.66` is on npm as `@intentius/terragucci@0.4.66`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.66) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.65 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.66 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
 ## In 0.4.66
+
+The package and the images now run chant `0.124.116`. The package's GitHub and Forgejo lexicons move to `0.124.104`.
+
+In a repo with environments the apply runs one job per environment group. `terragucci waves-spec` now names each wave's groups and the runs that each group holds. The spec used to name no groups. Every group's job then applied nothing and the merge's apply failed with the wave counted as decided, so a merge that changed dev did not apply dev.
+
+With `promotion` set, `init` now writes `.chant/pipeline.ts` beside `terragucci.component.ts`. Each environment whose gate is not `never` waits for one approval at its stage's gate in that pipeline. `terragucci promote` and `terragucci rollback` first read `.chant/pipeline.ts` on the default branch and exit 1 unless it gates the environment, so push the pipeline with the components. A promote asks before it plans, so `gate: on-destructive` asks on every promote. A rollback into a stage that sets `pause_after_rollback` pauses the stage until `terragucci resume`. When `.chant/pipeline.ts` is the repo's own, `init` keeps it and gives the components a gate for each environment that waits. Under `release.green: forge-checks` the release the last wave cuts also counts the `check` job and the earlier wave jobs of its own run. The workflow `init` writes passes those jobs to `terragucci waves-spec --own-run-jobs` ([Promote a release through environments](/terragucci/guides/promote-a-release/)).
+
+The drift agent's jobs are now chant's `terragucci-drift-agent` and `terragucci-drift-agent-push` in `terragucci-drift.yml`. The agent's pull request comes from the branch `terragucci/agent/terragucci-drift`. A drift run that opens the drift issue now runs `terragucci drift-agent show`, which lists each drifted resource with the state's value and the live one (never a sensitive one). The agent's prompt therefore holds what drifted and not only how many resources did. The drift job ends green with a `drift` output, and the `terragucci-drift-found` job that chant renders beside it shows the run red on drift ([Have an agent fix drift](/terragucci/guides/agent-fix-drift/)).
 
 `terragucci install`, and the install a stage runs for a root that pins its own version, now work in a job whose user cannot write the install directory. That is the Chainguard set's user 65532 when `TOFU_INSTALL_DIR` is a cache directory the runner mounts as root. A release the directory already holds is used where it is. Otherwise the install goes under `$HOME/.cache/terragucci-bin`, or the temp directory's `terragucci-bin` when `$HOME` cannot be written, and the job's log says so in one line. It refuses only when the job's user can write none of them, and names the directory, the user and the remedy. The check happens before the download. A job that can write the directory, such as every job in the Debian set, installs there as before, so a runner that keeps it still shares each release between jobs.
 
