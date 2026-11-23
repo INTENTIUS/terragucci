@@ -11,13 +11,14 @@ import { afterAll, describe, expect, it } from "vitest";
 const root = join(__dirname, "..");
 const lib = readFileSync(join(root, "stack", "lib.sh"), "utf8");
 
-/** One function of lib.sh, from its `name() {` line to the `}` that closes it. */
-function fn(name: string): string {
-  const start = lib.indexOf(`\n${name}() {`);
-  expect(start, `${name} in stack/lib.sh`).toBeGreaterThan(-1);
-  const end = lib.indexOf("\n}\n", start);
-  return lib.slice(start + 1, end + 2);
+/** One function of a stack script, from its `name() {` line to the `}` that closes it. */
+function fnOf(src: string, file: string, name: string): string {
+  const start = src.indexOf(`\n${name}() {`);
+  expect(start, `${name} in stack/${file}`).toBeGreaterThan(-1);
+  const end = src.indexOf("\n}\n", start);
+  return src.slice(start + 1, end + 2);
 }
+const fn = (name: string): string => fnOf(lib, "lib.sh", name);
 
 const made: string[] = [];
 afterAll(() => {
@@ -107,5 +108,41 @@ describe("the example boots", () => {
     ["example-gitlab.sh", /PUSH_BASE="[^"]+" gl_push "\$WORK\/tree" main "The shop's estate"/],
   ])("%s pushes its first commit on a base", (script, line) => {
     expect(readFileSync(join(root, "stack", script), "utf8")).toMatch(line);
+  });
+});
+
+// #1547: the claims, the GitLab claims and validate-generated.sh push their own
+// first trees, and each of those pipelines' apply waves reads HEAD^1 too.
+describe("the other first pushes", () => {
+  const read = (f: string) => readFileSync(join(root, "stack", f), "utf8");
+
+  it("smoke.sh sets PUSH_BASE for the claims it sources, before it sources them", () => {
+    const smoke = read("smoke.sh");
+    const set = smoke.search(/^export PUSH_BASE="\$\{PUSH_BASE-[^"]+\}"$/m);
+    expect(set).toBeGreaterThan(-1);
+    expect(set).toBeLessThan(smoke.indexOf('. "$HERE/smoke-claims-1.sh"'));
+  });
+
+  const shapes: [string, string, string][] = [
+    ["smoke-gitlab.sh", "gl_push", `GL_URL=REMOTE GL_USER=o gl_push TREE r main "the estate"`],
+    ["validate-generated.sh", "push_dir", `TOKEN=t TG_KEEP_DIGESTS=1 push_dir TREE REMOTE/o/r.git main "the estate"`],
+  ];
+  it.each(shapes)("%s's %s puts the base under a tree with no commit, and only then", (file, name, call) => {
+    const src = read(file);
+    const d = scratch("r");
+    const t = tree(d, "t");
+    const body = (c: string) => c.replaceAll("REMOTE", join(d, "remote")).replaceAll("TREE", JSON.stringify(t));
+    const script = `set -euo pipefail\nGL_TOKEN=t\n${fnOf(src, file, name)}\n${body(`PUSH_BASE="the base" ${call}`)} >/dev/null\n${body(`PUSH_BASE="the base" ${call}`).replace("the estate", "second")} >/dev/null`;
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+    const r = spawnSync("bash", ["-c", script], { cwd: d, encoding: "utf8", env });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(log(d, "r").map((l) => l.split("|")[1])).toEqual(["second", "the estate", "the base"]);
+    const root1 = log(d, "r")[2]!.split("|")[0]!.split(" ");
+    expect(root1[1]).toBe("");
+  });
+
+  it("validate-generated.sh sets PUSH_BASE by default", () => {
+    expect(read("validate-generated.sh")).toMatch(/^export PUSH_BASE="\$\{PUSH_BASE-[^"]+\}"$/m);
   });
 });
