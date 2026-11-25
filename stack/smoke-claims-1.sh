@@ -232,10 +232,14 @@ TF
   drop_work "$work"
   # Keys sort by millisecond timestamp, so the listing is the order they happened in.
   [ "$marks" = "start end start end " ] || { log "the applies overlapped or one did not run"; return 1; }
+  # chant's waves runtime posts terragucci/apply and words its description
+  # ("the wave applied" today), so the claim reads the state alone: the stage's
+  # newest status is success, and it is the only success on the commit.
   local statuses
-  statuses="$(api "$URL/api/v1/repos/$repo/commits/$sha2/statuses" | jq -r '[.[] | select(.context == "terragucci/apply")] | sort_by(.id) | last | .status + ":" + .description')"
-  log "terragucci/apply on the second commit: $statuses"
-  [ "$statuses" = "success:1 roots in 1 groups applied" ] || { log "expected one success status for the stage"; return 1; }
+  statuses="$(api "$URL/api/v1/repos/$repo/commits/$sha2/statuses" | jq -c '[.[] | select(.context == "terragucci/apply")] | sort_by(.id)')"
+  log "terragucci/apply on the second commit: $(jq -r 'map(.status + ":" + .description) | join(", ")' <<<"$statuses")"
+  [ "$(jq -r 'last | .status' <<<"$statuses")" = success ] && [ "$(jq '[.[] | select(.status == "success")] | length' <<<"$statuses")" = 1 ] \
+    || { log "expected one success status for the stage"; return 1; }
 }
 
 # ── gated waves on plain roots ────────────────────────────────────────────
@@ -392,6 +396,21 @@ claim_waves/tofu() {
   fi
   # The jobs of the run in RUN_ID: each "name status", one a line.
   jobs_of() { api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | "\(.name) \(.status)"'; }
+  # Forgejo 16 counts a run failed as soon as one of its jobs fails, while the
+  # jobs that need that job are still blocked: it releases them afterwards, and
+  # each wave job after the first and each status job runs then, since its if:
+  # holds !cancelled(). So wait_run can return failure with apply-wave-2 not yet
+  # started. Wait until every job is done, for at most TIMEOUT seconds.
+  jobs_settle() {
+    local deadline=$(( $(date +%s) + TIMEOUT )) live
+    while :; do
+      live="$(jobs_of | awk '$2 != "success" && $2 != "failure" && $2 != "cancelled" && $2 != "skipped"' | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+      [ -n "$live" ] || return 0
+      [ "$(date +%s)" -lt "$deadline" ] || { log "jobs not done after ${TIMEOUT}s: $live"; return 1; }
+      runner_watch
+      sleep 3
+    done
+  }
   job_log() { # job name
     local id
     id="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r --arg n "$1" '[.[] | select(.name == $n)][0].id // empty')"
@@ -407,6 +426,7 @@ claim_waves/tofu() {
   }
   sha="$(push_tree "$work/tree" "$repo" main "waves: first")"
   wait_run "$repo" "$sha"
+  jobs_settle || rc=1
   applied="$(gated_applied waves)"
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a root applied before any wave was approved"; rc=1; }
@@ -422,6 +442,7 @@ claim_waves/tofu() {
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "waves: after wave 1 was approved")"
     wait_run "$repo" "$sha"
+    jobs_settle || rc=1
     applied="$(gated_applied waves)"
     log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting for its own approval"; rc=1; }
