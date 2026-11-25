@@ -143,10 +143,14 @@ claim_apply/serial() {
   # and another when it ends, with a long pause between. The first push is
   # let run until its apply has started, then a second push lands. The marks
   # must read start end start end: the second apply waited for the first.
-  # BREAK: the lock is cut out of the committed pipeline, so the applies overlap.
+  # Each push to main runs in a concurrency group of its own commit, so the two
+  # runs' apply jobs start side by side, and the second plan waits at the first
+  # apply's state lock (the terraform lexicon's -lock-timeout=5m).
+  # BREAK: the plan and apply wait for no state lock (-lock-timeout=0s), so the
+  # second push's wave meets the first apply's lock and fails.
   # The runner has capacity 8, and under BREAK the smoke runner gives this claim
   # the runner to itself (runner! in CLAIM_GROUPS), so a free slot never forces
-  # the order: only the concurrency group and the state lock do.
+  # the order: only the state lock does.
   # Under SMOKE_BINARY=terraform the repo, its state and its marks are
   # serial-terraform, and the pipeline runs in the Terraform image.
   log() { echo "[smoke apply-serial] $*" >&2; }
@@ -198,23 +202,19 @@ TF
   fi
   echo 1 > "$work/app/rev.txt"
   # The second push replaces the resource, which on-destructive would hold for an
-  # approval; this claim is about the lock, so no wave waits.
+  # approval; this claim is about the lock, so no wave waits. terragucci.yml
+  # stays in the tree: each wave reads its gate from it at base, and without it
+  # the gate is the default on-destructive, which holds the second push.
   printf 'forge: forgejo\nbinary: %s\ngate: never\n' "$SMOKE_BINARY" > "$work/terragucci.yml"
-  (cd "$work" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
-  # BREAK=1 cuts all three guards; BREAK=lock,group,job names the ones to cut.
-  local wf="$work/.forgejo/workflows/terragucci.yml" cut="${BREAK:-}"
+  (cd "$work" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  local wf="$work/.forgejo/workflows/terragucci.yml"
   bin_pipeline "$wf" || { drop_work "$work"; return 1; }
-  [ "$cut" = 1 ] && cut=lock,group,job
-  case ",$cut," in *,lock,*) sed -i.bak 's#^\( *\)until git push -q origin .*; do#\1until true; do#' "$wf" ;; esac
-  case ",$cut," in *,group,*) awk '/^concurrency:/ {skip=1; next} skip && /^ / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf" ;; esac
-  case ",$cut," in *,job,*) awk '/^    concurrency:/ {skip=1; next} skip && /^      / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf" ;; esac
-  rm -f "$wf.bak"
-  # With a guard cut, the second run meets the first's state lock. The default
-  # wait is 5m, which is what the BREAK run spent its time on (321 s against 69 s);
-  # a few seconds is enough to see that nothing but the guards kept it out.
-  if [ -n "$cut" ]; then
-    awk '{print} /^  TF_INPUT: / {print "  TF_CLI_ARGS_plan: -lock-timeout=3s"; print "  TF_CLI_ARGS_apply: -lock-timeout=3s"}' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
-    grep -q 'TF_CLI_ARGS_apply' "$wf" || { log "the pipeline has no env block to set a lock timeout in"; return 1; }
+  # The concurrency block stays under BREAK too. With it cut, Forgejo 16
+  # cancelled the first run's apply as the second run started (#1547), which
+  # fails the claim for a reason other than the lock and leaves the lock behind.
+  if [ -n "${BREAK:-}" ]; then
+    awk '{print} /^  TF_INPUT: / {print "  TF_CLI_ARGS_plan: -lock-timeout=0s"; print "  TF_CLI_ARGS_apply: -lock-timeout=0s"}' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'TF_CLI_ARGS_apply' "$wf" || { log "the pipeline has no env block to set a lock timeout in"; drop_work "$work"; return 1; }
   fi
   sha1="$(push_tree "$work" "$repo" main "$name: first")"
   for i in $(seq 1 120); do
@@ -372,8 +372,12 @@ claim_waves/tofu() {
   # stops there and wave 2 (fleet/*) never starts: no root has state. Approve
   # wave 1 and push again: canary/one applies, and wave 2 waits for its own
   # approval, so fleet/* still has none.
-  # BREAK: the pushed pipeline runs with --gate never, so no wave waits and
-  # wave 2 applies with nothing approved.
+  # A wave that waits fails its job (exit 3), so both runs end failure. That
+  # alone proves nothing: each run's jobs are read, and a wave job may fail
+  # only by waiting at its gate, every other job passing or being skipped.
+  # BREAK: terragucci.yml sets gate: never before init, so the base each wave
+  # reads its gate at has it too: no wave waits and wave 2 applies with
+  # nothing approved.
   log() { echo "[smoke waves] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -381,17 +385,36 @@ claim_waves/tofu() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo waves || { drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
-    rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+    sed -i.bak 's#^gate: always$#gate: never#' "$work/tree/terragucci.yml"
+    rm -f "$work/tree/terragucci.yml.bak"
+    grep -qx 'gate: never' "$work/tree/terragucci.yml" || { log "BREAK did not set gate: never"; drop_work "$work"; return 1; }
+    (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
   fi
+  # The jobs of the run in RUN_ID: each "name status", one a line.
+  jobs_of() { api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | "\(.name) \(.status)"'; }
+  job_log() { # job name
+    local id
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r --arg n "$1" '[.[] | select(.name == $n)][0].id // empty')"
+    [ -z "$id" ] || api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null || true
+  }
+  # The run's jobs behave: the waves named fail and every other job passed or was skipped.
+  run_behaves() { # failing wave jobs...
+    local jobs bad
+    jobs="$(jobs_of)"
+    log "jobs: $(tr '\n' ',' <<<"$jobs" | sed 's/,$//; s/,/, /g')"
+    bad="$(awk -v want=" $* " '{ w = index(want, " " $1 " ") > 0; if (w && $2 != "failure") print $1 " " $2 " (expected failure at its gate)"; else if (!w && $2 != "success" && $2 != "skipped") print $1 " " $2 }' <<<"$jobs")"
+    [ -z "$bad" ] || { log "jobs that did not behave: $(tr '\n' ';' <<<"$bad")"; return 1; }
+  }
   sha="$(push_tree "$work/tree" "$repo" main "waves: first")"
   wait_run "$repo" "$sha"
   applied="$(gated_applied waves)"
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a root applied before any wave was approved"; rc=1; }
   if [ $rc = 0 ]; then
-    run_logs "$repo" "$RUN_ID" | grep "terragucci approve wave-1" >/dev/null || { log "wave 1 did not print its approval command"; rc=1; }
-    run_logs "$repo" "$RUN_ID" | grep -E "terragucci approve wave-1 .*--sign" >/dev/null && { log "under approval: ledger the command asks for --sign"; rc=1; }
+    run_behaves apply-wave-1 apply-wave-2 || rc=1
+    job_log apply-wave-1 | grep "terragucci approve wave-1" >/dev/null || { log "wave 1 did not wait at its gate with its approval command"; rc=1; }
+    job_log apply-wave-1 | grep -E "terragucci approve wave-1 .*--sign" >/dev/null && { log "under approval: ledger the command asks for --sign"; rc=1; }
+    job_log apply-wave-2 | grep "waits at its gate" >/dev/null || { log "wave 2 failed for another reason than wave 1 waiting at its gate"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     gated_approve waves 1 || rc=1
@@ -402,6 +425,10 @@ claim_waves/tofu() {
     applied="$(gated_applied waves)"
     log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting for its own approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    run_behaves apply-wave-2 || rc=1
+    job_log apply-wave-2 | grep "terragucci approve wave-2" >/dev/null || { log "wave 2 did not wait at its own gate with its approval command"; rc=1; }
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
