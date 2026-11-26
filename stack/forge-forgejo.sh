@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # The forgejo profile's side of validate-generated.sh, for the claims that run
-# the pipeline terragucci generates (tg-*, cdf-*); validate.sh's own forgejo
+# the pipeline terragucci generates (*/terragrunt, */choudoufu); validate.sh's own forgejo
 # check and apply run a hand-written workflow. Forgejo and its runner are on
 # the terragucci network, the runner gives every job floci's AWS environment,
 # and a push starts the run by itself; "the run" is the one on the pushed sha,
 # polled to the end with lib.sh's wait_run.
 #
-# Defines the part of forge-github.sh's interface the tg-* and cdf-* claims
+# Defines the part of forge-github.sh's interface the */terragrunt and */choudoufu claims
 # call: forge_load, forge_reset_repo, forge_remote, forge_push, forge_run,
 # forge_logs.
 FORGE_TOKEN_ENV=TERRAGUCCI_FORGEJO_TOKEN

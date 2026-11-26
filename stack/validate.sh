@@ -2,26 +2,26 @@
 #
 # Run one named claim against a running profile of the validation stack.
 #
-#   stack/validate.sh forgejo check
-#   stack/validate.sh forgejo apply
-#   BREAK=1 stack/validate.sh forgejo check     must fail
+#   stack/validate.sh forgejo check/tofu
+#   stack/validate.sh forgejo apply/tofu
+#   BREAK=1 stack/validate.sh forgejo check/tofu     must fail
 #
-# Implemented here (forgejo only; validate-generated.sh holds forgejo's tg-*
-# and cdf-* claims and every github and gitlab claim):
+# Implemented here (forgejo only; validate-generated.sh holds forgejo's */terragrunt
+# and */choudoufu claims and every github and gitlab claim):
 #
-#   check  The fmt check passes on a formatted root and fails on an
+#   check/tofu  The fmt check passes on a formatted root and fails on an
 #          unformatted one. Two pushes to a branch: the fixture as it is,
 #          whose run must succeed, and the fixture plus an unformatted file,
 #          whose run must fail with that file named in the job log.
-#   apply  A push to main applies the root to floci. The bucket is deleted
+#   apply/tofu  A push to main applies the root to floci. The bucket is deleted
 #          from floci first, the run must succeed, and the bucket must then
 #          exist when asked from the host.
 #
 # BREAK=1 breaks the property each claim is about and the claim must then
 # fail, which shows the check can tell:
 #
-#   check  the push that should be clean carries the unformatted file.
-#   apply  the pushed workflow has its `tofu apply` step removed, so the run
+#   check/tofu  the push that should be clean carries the unformatted file.
+#   apply/tofu  the pushed workflow has its `tofu apply` step removed, so the run
 #          still goes green and only the host-side bucket check can catch it.
 #
 # Needs stack/bootstrap.sh forgejo first; the env it wrote to
@@ -35,7 +35,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # A person starts it (stack/human-gate.sh).
 . "$HERE/human-gate.sh"; human_gate "a claim plain and under BREAK on a running profile of the shared stack"
 FORGE="${1:-forgejo}"
-CLAIM="${2:-apply}"
+CLAIM="${2:-apply/tofu}"
 BREAK="${BREAK:-}"
 TIMEOUT="${TERRAGUCCI_VALIDATE_TIMEOUT:-900}"
 FIXTURE="$HERE/fixtures/s3-bucket"
@@ -43,7 +43,8 @@ BUCKET="terragucci-validate"
 
 log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
-usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: aws s3, forgejo check|apply|tg-check|tg-apply|cdf-check|cdf-apply, github and gitlab those and reconcile)" >&2; exit 2; }
+FORGEJO_CLAIMS="check/tofu apply/tofu check/terragrunt apply/terragrunt check/choudoufu apply/choudoufu approval/pr-review"
+usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: aws boot/s3; forgejo ${FORGEJO_CLAIMS// /, }; github and gitlab: see stack/validate-generated.sh)" >&2; exit 2; }
 
 command -v docker >/dev/null 2>&1 || { echo "SKIP: docker is not installed"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: the docker daemon is not reachable"; exit 0; }
@@ -69,7 +70,7 @@ case "$FORGE:$CLAIM" in
   fountain:*)
     echo "the $FORGE profile has no validate.sh claims; the steward smoke claim checks it (just smoke steward)" >&2; exit 2 ;;
   forgejo:*)
-    echo "claim '$CLAIM' is not implemented for forgejo yet (implemented: check, apply, tg-check, tg-apply, cdf-check, cdf-apply)" >&2; exit 2 ;;
+    echo "claim '$CLAIM' is not implemented for forgejo yet (implemented: ${FORGEJO_CLAIMS// /, })" >&2; exit 2 ;;
   *) usage ;;
 esac
 

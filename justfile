@@ -205,7 +205,7 @@ stack-down:
     stack/down.sh
 
 [doc("Run one claim against a running profile. BREAK=1 breaks the property and must fail.")]
-validate forge="forgejo" claim="apply": build-cli
+validate forge="forgejo" claim="apply/tofu": build-cli
     #!/usr/bin/env bash
     set -euo pipefail
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
