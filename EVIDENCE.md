@@ -148,7 +148,7 @@ One row per claim. The result is the weakest of its runs. Where it runs lists ev
 | `waves/terragrunt-layers` | a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies | Forgejo | proven |
 | `waves/terragrunt-stack` | the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them | Forgejo | proven |
 | `waves/terramate` | init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate | Forgejo | proven |
-| `waves/tofu` | each wave goes out only once approved | Forgejo (Terraform), Forgejo (choudoufu) | proven |
+| `waves/tofu` | each wave goes out only once approved | Forgejo, Forgejo (Terraform), Forgejo (choudoufu) | proven |
 
 ### Locks and safety
 
