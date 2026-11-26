@@ -110,6 +110,14 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
+      "commit": "730f53c"
+    },
+    {
+      "claim": "waves/tofu",
+      "says": "each wave goes out only once approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
       "binary": "terraform",
       "commit": "4db5e993"
     },
@@ -261,7 +269,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "730f53c"
     },
     {
       "claim": "apply/serial",
