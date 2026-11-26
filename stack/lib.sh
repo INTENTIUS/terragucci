@@ -127,7 +127,7 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     # (#1541, chant#5488). PUSH_BASE commits the same tree under it, and one
     # push carries both, so the forge starts one run, on MESSAGE's commit.
     if [ -n "${PUSH_BASE:-}" ] && ! git rev-parse -q --verify HEAD >/dev/null; then
-      git "${who_c[@]}" commit -q -m "$PUSH_BASE"
+      git "${who_c[@]}" commit -q --allow-empty -m "$PUSH_BASE"
     fi
     git "${who_c[@]}" commit -q --allow-empty -m "$message"
     local who="${PUSH_USER:-$USER}" secret="${PUSH_TOKEN:-$TOKEN}"

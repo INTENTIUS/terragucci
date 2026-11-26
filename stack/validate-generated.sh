@@ -192,7 +192,7 @@ push_dir() { # dir remote branch message
     # An apply wave reads its gate policy at HEAD^1, which a first commit lacks
     # (#1547): PUSH_BASE commits the tree under the commit this call pushes.
     if [ -n "${PUSH_BASE:-}" ] && ! git rev-parse -q --verify HEAD >/dev/null; then
-      git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "$PUSH_BASE"
+      git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q --allow-empty -m "$PUSH_BASE"
     fi
     git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q --allow-empty -m "$4"
     local out
