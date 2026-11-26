@@ -22,7 +22,7 @@
 # name|what the site says|issue that builds it (empty: implemented here)
 GITLAB_CLAIMS='note/footer|the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG|
 tips/tofu|the plan note on a merge request counts the tips the plan report holds, each naming its rule and page|
-apply/serial|two pushes to main apply one after the other through the resource group, none is cancelled, and the commit carries one terragucci/apply success|
+apply/serial|two pushes to main apply one after the other, every job of both pipelines passes or is skipped, and the commit carries one terragucci/apply success|
 policy/override|a wave the policy denies is retried with no effect after an override by someone policy.override does not list, applies after the listed approver overrides its plan, and its report names the override|
 note/mr-widget|the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete|
 apply/gitlab-parallelism|roots on GitLab-managed state apply at most 3 at once, and the apply job says so|
@@ -211,6 +211,24 @@ gl_wait() { # project sha [source]
   log "pipeline $PIPE_ID for ${2:0:8}${3:+ ($3)}: $PIPE_STATUS ($(jq -r .web_url <<<"$p" | gl_browser))"
 }
 
+# The jobs of PIPE_ID, polled until each one has ended (success, failed,
+# canceled, skipped) or waits for a person (manual), for at most GL_TIMEOUT
+# seconds. Sets PIPE_JOBS to the last read. gl_wait returns as soon as the
+# pipeline's own status has ended; a claim that reads job states reads them
+# after this.
+gl_settle() { # project
+  local jobs live deadline=$(( $(date +%s) + GL_TIMEOUT ))
+  while :; do
+    jobs="$(glapi "$(gl_p "$1")/pipelines/$PIPE_ID/jobs?per_page=100&include_retried=true")" || jobs="[]"
+    live="$(jq -r '[.[] | select(.status | IN("success", "failed", "canceled", "skipped", "manual") | not) | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
+    if [ -z "$live" ] && [ "$(jq length <<<"$jobs")" -gt 0 ]; then PIPE_JOBS="$jobs"; return 0; fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      PIPE_JOBS="$jobs"; log "pipeline $PIPE_ID: jobs not done after ${GL_TIMEOUT}s: ${live:-none listed}"; return 1
+    fi
+    sleep 4
+  done
+}
+
 gl_job() { # name -> the newest job of that name in PIPE_JOBS
   jq -r --arg n "$1" '[.[] | select(.name == $n)] | max_by(.id) | .id // empty' <<<"$PIPE_JOBS"
 }
@@ -374,23 +392,38 @@ gitlab_claim_tips/tofu() {
 
 gitlab_claim_apply/serial() {
   # app's apply writes a mark to floci when it starts and another when it ends,
-  # 60 seconds apart, longer than the second pipeline's check job takes. A second push lands on main once the first push's apply
-  # has started. The marks must read start end start end: the second apply
-  # waited for the first in the resource group terragucci-apply. Both
-  # pipelines pass, no job is cancelled, and the second commit's
-  # terragucci/apply is one success for the stage.
-  # BREAK: the resource group is cut from the pipeline and the state lock
-  # waits 3 seconds, so the second apply runs into the first.
+  # 60 seconds apart, longer than the second pipeline's check job takes. A
+  # second push lands on main once the first push's apply has started. The
+  # marks must read start end start end: the second apply waited for the
+  # first. The apply-wave jobs carry no resource group (chant's Op waves
+  # pipeline), so the two pipelines' apply-wave-1 jobs run side by side; what
+  # keeps the second out is its plan waiting at the first apply's state lock
+  # (the terraform lexicon's -lock-timeout=5m), and, where chant's ledger
+  # queues the root's row, its wait there (CHANT_LOCK_WAIT). Both pipelines
+  # pass with every job passed or skipped, which their pipeline status alone
+  # does not say: apply-wave-1 may fail with exit 1 and leave the pipeline
+  # passed. The second commit's
+  # terragucci/apply ends success, its one success.
+  # BREAK: the apply-wave jobs wait for no state lock (-lock-timeout=0s on
+  # plan and apply) and for no ledger row (CHANT_LOCK_WAIT 0), so the second
+  # wave meets the first apply's lock and fails. A BREAK run in which the
+  # second apply-wave-1 did not fail counts as a setup failure, not caught.
+  # The lab runner takes 4 jobs at once, and under BREAK the smoke runner
+  # gives this claim the runner to itself (runner! in GITLAB_CLAIM_GROUPS), so
+  # a free slot never forces the order: only the locks do.
   log() { echo "[smoke gitlab apply-serial] $*" >&2; }
   gl_load || return 1
   build_cli || return 1
-  local work project wf sha1 sha2 i marks s1 s2 cancelled status rc=0
+  local work project wf sha1 sha2 marks s1 s2 j1 j2 wave2 statuses waves cut rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   project="$(gl_project apply-serial)" || { drop_work "$work"; return 1; }
   log "project $GL_URL/$GL_USER/$project"
   # The second push replaces the resource, which on-destructive would hold for an
-  # approval; this claim is about the order, so no wave waits.
-  gl_tree "$work/tree" "$project" "gate: never\n" || { drop_work "$work"; return 1; }
+  # approval; this claim is about the order, so no wave waits. terragucci.yml
+  # stays in the tree: each wave reads its gate from it at base, and without it
+  # the gate is the default on-destructive, which holds the second push.
+  gl_tree "$work/tree" "$project" "gate: never\n" || { break_setup_failed "init failed"; drop_work "$work"; return 1; }
+  grep -qx 'gate: never' "$work/tree/terragucci.yml" || { log "terragucci.yml does not set gate: never"; break_setup_failed "terragucci.yml does not set gate: never"; drop_work "$work"; return 1; }
   cat >> "$work/tree/app/main.tf" <<TF
 
 resource "terraform_data" "slow" {
@@ -406,38 +439,64 @@ resource "terraform_data" "slow" {
 }
 TF
   wf="$work/tree/.gitlab/terragucci.yml"
-  grep -q '^  resource_group: terragucci-apply$' "$wf" || { log "the pipeline has no resource group for its apply jobs"; drop_work "$work"; return 1; }
+  grep -q '^apply-wave-1:$' "$wf" || { log "the pipeline has no apply-wave-1 job"; break_setup_failed "the pipeline has no apply-wave-1 job"; drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    grep -v '^  resource_group: terragucci-apply$' "$wf" \
-      | awk '{ print } /^    TF_INPUT: / { print "    TF_CLI_ARGS_plan: -lock-timeout=3s"; print "    TF_CLI_ARGS_apply: -lock-timeout=3s" }' > "$wf.new" && mv "$wf.new" "$wf"
+    # CHANT_LOCK_WAIT is in each apply-wave job's variables and nowhere else.
+    awk '/^    CHANT_LOCK_WAIT: / { print "    CHANT_LOCK_WAIT: '"'"'0'"'"'"; print "    TF_CLI_ARGS_plan: -lock-timeout=0s"; print "    TF_CLI_ARGS_apply: -lock-timeout=0s"; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    waves="$(grep -cE '^apply-wave-[0-9]+:$' "$wf")"
+    cut="$(grep -c '^    TF_CLI_ARGS_apply: -lock-timeout=0s$' "$wf")"
+    [ "$cut" -gt 0 ] && [ "$cut" = "$waves" ] \
+      || { log "BREAK set no lock timeout in each apply-wave job ($cut of $waves)"; break_setup_failed "BREAK set no lock timeout in each apply-wave job"; drop_work "$work"; return 1; }
+    log "BREAK: $cut apply-wave job(s) wait for no state lock and no ledger row"
   fi
-  sha1="$(gl_push "$work/tree" "$project" main "serial: first")" || rc=1
+  sha1="$(gl_push "$work/tree" "$project" main "serial: first")" || { break_setup_failed "the first push failed"; rc=1; }
   if [ $rc = 0 ]; then
     for _ in $(seq 1 150); do
       gl_floci_keys "$project-marks/" 2>/dev/null | grep -q -- '-start$' && break
       sleep 2
     done
-    gl_floci_keys "$project-marks/" | grep -q -- '-start$' || { log "the first apply never started"; rc=1; }
+    gl_floci_keys "$project-marks/" | grep -q -- '-start$' || { log "the first apply never started"; break_setup_failed "the first apply never started"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     echo 2 > "$work/tree/app/rev.txt"
-    sha2="$(gl_push "$work/tree" "$project" main "serial: second")" || rc=1
+    sha2="$(gl_push "$work/tree" "$project" main "serial: second")" || { break_setup_failed "the second push failed"; rc=1; }
   fi
+  # The newest job of each name in PIPE_JOBS, as "name status, ...": all of them, or those that neither passed nor were skipped.
+  jobs_in() { jq -r '[group_by(.name)[] | max_by(.id) | "\(.name) \(.status)"] | join(", ")' <<<"$PIPE_JOBS"; }
+  not_passed() { jq -r '[group_by(.name)[] | max_by(.id) | select(.status != "success" and .status != "skipped") | "\(.name) \(.status)"] | join(", ")' <<<"$PIPE_JOBS"; }
   if [ $rc = 0 ]; then
     gl_wait "$project" "$sha1" push || rc=1
-    s1="$PIPE_STATUS"; cancelled="$(jq -r '[.[] | select(.status == "canceled") | .name] | join(" ")' <<<"$PIPE_JOBS")"
+    gl_settle "$project" || rc=1
+    s1="$PIPE_STATUS"; j1="$(not_passed)"
+    log "pipeline 1 jobs: $(jobs_in)"
     gl_wait "$project" "$sha2" push || rc=1
-    s2="$PIPE_STATUS"; cancelled="$cancelled $(jq -r '[.[] | select(.status == "canceled") | .name] | join(" ")' <<<"$PIPE_JOBS")"
+    gl_settle "$project" || rc=1
+    s2="$PIPE_STATUS"; j2="$(not_passed)"
+    log "pipeline 2 jobs: $(jobs_in)"
+    wave2="$(jq -r '[.[] | select(.name == "apply-wave-1")] | max_by(.id) | .status // "none"' <<<"$PIPE_JOBS")"
+    if [ "$wave2" != success ]; then
+      log "pipeline 2's apply-wave-1 ended $wave2; its lock lines:"
+      gl_trace "$project" "$(gl_job apply-wave-1)" | grep -E 'state lock|LockWaitTimeoutError|rows its runs change|applied nothing' | tail -8 >&2 || true
+    fi
     marks="$(gl_floci_keys "$project-marks/" | sed -E 's#.*/[0-9]*-##' | tr '\n' ' ')"
     log "marks in key order: $marks"
     [ "$s1" = success ] && [ "$s2" = success ] || { log "the pipelines ended $s1 and $s2"; rc=1; }
-    [ -z "${cancelled// /}" ] || { log "cancelled: $cancelled"; rc=1; }
+    [ -z "$j1$j2" ] || { log "jobs that neither passed nor were skipped: ${j1:-none} in pipeline 1, ${j2:-none} in pipeline 2"; rc=1; }
     # Keys sort by millisecond timestamp, so the listing is the order they happened in.
     [ "$marks" = "start end start end " ] || { log "the applies overlapped or one did not run"; rc=1; }
-    status="$(glapi "$(gl_p "$project")/repository/commits/$sha2/statuses?name=terragucci/apply&all=true" \
-      | jq -r 'sort_by(.id) | map(select(.status != "running" and .status != "pending")) | map(.status + ":" + .description) | join(" | ")')"
-    log "terragucci/apply on the second commit: ${status:-none}"
-    [ "$status" = "success:1 roots in 1 groups applied" ] || { log "expected one success status for the stage"; rc=1; }
+    # chant's waves runtime posts terragucci/apply and words its description
+    # ("the wave applied" today), so the claim reads the state alone: the
+    # newest ended status is success, and it is the only success on the commit.
+    statuses="$(glapi "$(gl_p "$project")/repository/commits/$sha2/statuses?name=terragucci/apply&all=true" \
+      | jq -c 'sort_by(.id) | map(select(.status != "running" and .status != "pending"))')" || statuses="[]"
+    log "terragucci/apply on the second commit: $(jq -r 'map(.status + ":" + .description) | join(", ") | if . == "" then "none" else . end' <<<"$statuses")"
+    [ "$(jq -r 'last | .status // "none"' <<<"$statuses")" = success ] && [ "$(jq '[.[] | select(.status == "success")] | length' <<<"$statuses")" = 1 ] \
+      || { log "expected one success status for the stage"; rc=1; }
+    # Under BREAK the claim is caught by the second wave failing, not by
+    # something before it: a second apply-wave-1 that did not fail broke nothing.
+    if [ -n "${BREAK:-}" ] && [ $rc = 1 ] && [ "$wave2" != failed ]; then
+      break_setup_failed "pipeline 2's apply-wave-1 ended $wave2, not failed at a lock"
+    fi
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the second push's apply waited for the first: $marks"
