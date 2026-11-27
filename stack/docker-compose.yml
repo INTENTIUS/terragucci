@@ -3,7 +3,7 @@
 # validated today and what is only declared.
 #
 #   stack/bootstrap.sh forgejo     bring a profile up and print its env vars
-#   stack/validate.sh forgejo apply
+#   stack/validate.sh forgejo apply/tofu
 #   stack/down.sh                  remove every container, network and volume but the job cache
 #
 # floci, Forgejo and forgejo-runner are not in this file. They come from

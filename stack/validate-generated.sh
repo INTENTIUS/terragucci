@@ -2,45 +2,45 @@
 #
 # Claims on the github and gitlab profiles, run with the pipeline terragucci
 # generates for the forge rather than a hand-written one. validate.sh hands
-# over here for those forges, and for the forgejo profile's tg-* and cdf-*
+# over here for those forges, and for the forgejo profile's */terragrunt and */choudoufu
 # claims (its check and apply run validate.sh's hand-written workflow).
 #
-#   stack/validate-generated.sh github check
-#   stack/validate-generated.sh gitlab apply
-#   stack/validate-generated.sh github reconcile
-#   stack/validate-generated.sh gitlab tg-check
-#   BREAK=1 stack/validate-generated.sh gitlab check    must fail
+#   stack/validate-generated.sh github check/tofu
+#   stack/validate-generated.sh gitlab apply/tofu
+#   stack/validate-generated.sh github reconcile/tofu
+#   stack/validate-generated.sh gitlab check/terragrunt
+#   BREAK=1 stack/validate-generated.sh gitlab check/tofu    must fail
 #
-#   check      the fmt check passes a formatted root and fails an unformatted
+#   check/tofu      the fmt check passes a formatted root and fails an unformatted
 #              one, with the file named in the job log.
-#   apply      with the bucket deleted from floci first, a push to main goes
+#   apply/tofu      with the bucket deleted from floci first, a push to main goes
 #              green and the bucket then exists when asked from the host.
-#   reconcile  terragucci reconcile --mode apply on a control repo of two
+#   reconcile/tofu  terragucci reconcile --mode apply on a control repo of two
 #              projects: the one with no pipeline gets one pull (merge)
 #              request, the one already in line is left alone, the request's
 #              check goes green, and merged, its pipeline applies both roots
 #              in order (app reads network's state).
-#   tg-check   check, on a Terragrunt repo (fixtures/terragrunt-buckets: two
+#   check/terragrunt   check, on a Terragrunt repo (fixtures/terragrunt-buckets: two
 #              units, an implicit stack): the pipeline init writes runs in the
 #              terragrunt image, and an unformatted .hcl file in a unit fails
 #              it with the file named.
-#   tg-apply   apply, on the same repo: both units' buckets exist afterwards.
-#   cdf-check  check, on a choudoufu estate (fixtures/choudoufu-estate): the
+#   apply/terragrunt   apply, on the same repo: both units' buckets exist afterwards.
+#   check/choudoufu   check, on a choudoufu estate (fixtures/choudoufu-estate): the
 #              pipeline runs in the choudoufu image, and a resource whose
 #              lifecycle ignores its tags, which live-check refuses, fails it
 #              with the resource named.
-#   cdf-apply  apply, on the same estate: the bucket exists afterwards and
+#   apply/choudoufu   apply, on the same estate: the bucket exists afterwards and
 #              carries the estate marker choudoufu writes.
-#   gate-wait  gitlab only: with the gate at always, a push to main waits at
+#   approval/gate   gitlab only: with the gate at always, a push to main waits at
 #              wave 1. The pipeline ends (failed), the wave's job ends with
 #              exit code 3 and prints terragucci approve, no status call is
 #              refused, terragucci/apply is failed with the wave's command,
 #              and the bucket does not exist.
-#   own-jobs   gitlab only: a repo with its own .gitlab-ci.yml (one job, no
+#   init/own-jobs   gitlab only: a repo with its own .gitlab-ci.yml (one job, no
 #              stage). init adds the include of .gitlab/terragucci.yml and
 #              keeps the job; a push to a branch goes green, the repo's job
 #              runs in the test stage, and terragucci's check runs beside it.
-#   pr-review  forgejo: the root with approval: pr-review and gate: always. A
+#   approval/pr-review  forgejo: the root with approval: pr-review and gate: always. A
 #              push to main waits at wave 1. A pull request that adds a
 #              resource to the root is approved on its head by a second user
 #              with write access and merged: the merge's wave 1 applies with no
@@ -66,7 +66,7 @@
 #   gl-comment-drift-schedule  gitlab: with drift and comments set, a
 #              schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone,
 #              and the comments schedule the comments job alone.
-#   pr-apply   gitlab: apply.when: pull-request with merge: auto. A merge
+#   pr-apply/tofu   gitlab: apply.when: pull-request with merge: auto. A merge
 #              request approved by a second member after its last push gets
 #              a Developer's /terragucci apply; the comments schedule's play
 #              starts a pipeline on main, whose mr-apply job applies the head
@@ -145,16 +145,17 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check/tofu|apply/tofu|reconcile/tofu|check/terragrunt|apply/terragrunt|check/choudoufu|apply/choudoufu|approval/gate|init/own-jobs|approval/pr-review|approval/approve|comment/plan|comment/apply|comment/drift-schedule|pr-apply/tofu|pr-apply/stale|lock/apply|pr-apply/trust|security/protected-token|approval/pr-review-bot|security/check-token|state/gitlab-managed) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
+CLAIMS_HERE="check/tofu apply/tofu reconcile/tofu check/terragrunt apply/terragrunt check/choudoufu apply/choudoufu approval/gate init/own-jobs approval/pr-review approval/approve comment/plan comment/apply comment/drift-schedule pr-apply/tofu pr-apply/stale lock/apply pr-apply/trust security/protected-token approval/pr-review-bot security/check-token state/gitlab-managed"
+case " $CLAIMS_HERE " in *" $CLAIM "*) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (implemented: ${CLAIMS_HERE// /, })" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:pr-apply/*|gitlab:lock/apply) ;; *:pr-apply/*|*:lock/apply) echo "$CLAIM is gitlab's here; the smoke claims of that name run it on Forgejo" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:approval/approve) ;; *:approval/approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in forgejo:approval/pr-review|gitlab:approval/pr-review) ;; *:approval/pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:approval/gate) ;; *:approval/gate) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:approval/approve) ;; *:approval/approve) echo "approval/approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in forgejo:approval/pr-review|gitlab:approval/pr-review) ;; *:approval/pr-review) echo "approval/pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:approval/gate) ;; *:approval/gate) echo "approval/gate is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:security/protected-token|gitlab:approval/pr-review-bot|gitlab:security/check-token|gitlab:state/gitlab-managed) ;; *:security/protected-token|*:approval/pr-review-bot|*:security/check-token|*:state/gitlab-managed) echo "$CLAIM is gitlab's: it checks GitLab's variables, approvals and state" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:comment/plan|gitlab:comment/apply|gitlab:comment/drift-schedule) ;; *:comment/plan|*:comment/apply|*:comment/drift-schedule) echo "$CLAIM is gitlab's: it checks the comments schedule" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:init/own-jobs) ;; *:init/own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:init/own-jobs) ;; *:init/own-jobs) echo "init/own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
-case "$FORGE:$CLAIM" in forgejo:check/tofu|forgejo:apply/tofu|forgejo:reconcile/tofu) echo "forgejo's $CLAIM is validate.sh's own; this script runs its tg-* and cdf-* claims" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in forgejo:check/tofu|forgejo:apply/tofu|forgejo:reconcile/tofu) echo "forgejo's $CLAIM is validate.sh's own; this script runs its */terragrunt and */choudoufu claims" >&2; exit 2 ;; esac
 
 # shellcheck source=forge-github.sh
 . "$HERE/forge-$FORGE.sh"

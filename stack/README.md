@@ -2,7 +2,7 @@
 
 terragucci's pipelines are meant to be run before they ship, on a real forge with a real runner, against an AWS emulator, all on one Docker network. This directory is that stack. [terragucci#4](https://github.com/INTENTIUS/terragucci/issues/4) is the design and lists every claim it should eventually check.
 
-The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/workflows/tofu.yml`). The github and gitlab claims run the pipeline `terragucci init` writes for that forge into the same fixture, so they check the generated file. On every forge, the `tg-*` claims do the same for a Terragrunt repo (`fixtures/terragrunt-buckets`, two units with no `terragrunt.stack.hcl`) and the `cdf-*` claims for a choudoufu estate (`fixtures/choudoufu-estate`, one root with an `estate.chdf.hcl`).
+The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/workflows/tofu.yml`). The github and gitlab claims run the pipeline `terragucci init` writes for that forge into the same fixture, so they check the generated file. On every forge, the `*/terragrunt` claims do the same for a Terragrunt repo (`fixtures/terragrunt-buckets`, two units with no `terragrunt.stack.hcl`) and the `*/choudoufu` claims for a choudoufu estate (`fixtures/choudoufu-estate`, one root with an `estate.chdf.hcl`).
 
 ## What runs today
 
@@ -90,19 +90,19 @@ Facts measured on floci that the example relies on: SQS `visibility_timeout_seco
 
 | Claim | Holds when | `BREAK=1` does |
 |---|---|---|
-| `aws s3` | a bucket created on floci is found when asked from the host | asks for a bucket that was never created |
-| `forgejo check` | a push of the fixture goes green, and a push of the fixture plus an unformatted file goes red with that file named in the job log | the push that should be clean carries the unformatted file |
-| `forgejo apply` | with the bucket deleted from floci first, a push to `main` goes green and the bucket then exists when asked from the host | removes the `tofu apply` step, so the run is green and only the host check can catch it |
-| `github check`, `gitlab check` | the same, with the pipeline `terragucci init` wrote | the same |
-| `github apply`, `gitlab apply` | the same, with the generated pipeline | removes the generated `apply` job |
-| `github reconcile`, `gitlab reconcile` | `terragucci reconcile --mode apply` on a control repo of two projects opens one pull (merge) request on the project with no pipeline and leaves the in-line project alone; the request's check goes green; merged, its pipeline applies both roots, network before app | runs `--mode dry-run`, which opens nothing |
-| `tg-check` (forgejo, github, gitlab) | on the Terragrunt fixture, whose pipeline runs in the terragrunt image: a push goes green, and a push with an unformatted `live/one/owner.hcl` goes red with the file named | the push that should be clean carries `owner.hcl` |
-| `tg-apply` (forgejo, github, gitlab) | on the Terragrunt fixture, with both units' buckets deleted from floci first, a push to `main` goes green and both buckets then exist | removes the generated apply jobs |
-| `cdf-check` (forgejo, github, gitlab) | on the choudoufu fixture, whose pipeline runs in the choudoufu image: a push goes green, and a push adding `infra/ignored.tf`, a bucket whose lifecycle ignores its tags, goes red with a `refused: infra:` line naming it (live-check refuses ignoring the ownership markers) | the push that should be clean carries `ignored.tf` |
-| `cdf-apply` (forgejo, github, gitlab) | on the choudoufu fixture, with the bucket deleted from floci first, a push to `main` goes green, the bucket then exists, and its tags carry `tofu-estate` | removes the generated apply jobs |
-| `gitlab gate-wait` | with the gate at `always` and `GITLAB_TOKEN` set on the project, a push to `main` waits at wave 1: the pipeline ends failed, the wave's job ends with exit code 3 and prints `terragucci approve`, no status call answers 400, `terragucci/apply` is failed with the wave's command, and the bucket is absent | drops the `\|\| exit $?` after each job's heredoc, so the job ends with 1 |
+| `aws boot/s3` | a bucket created on floci is found when asked from the host | asks for a bucket that was never created |
+| `forgejo check/tofu` | a push of the fixture goes green, and a push of the fixture plus an unformatted file goes red with that file named in the job log | the push that should be clean carries the unformatted file |
+| `forgejo apply/tofu` | with the bucket deleted from floci first, a push to `main` goes green and the bucket then exists when asked from the host | removes the `tofu apply` step, so the run is green and only the host check can catch it |
+| `github check/tofu`, `gitlab check/tofu` | the same, with the pipeline `terragucci init` wrote | the same |
+| `github apply/tofu`, `gitlab apply/tofu` | the same, with the generated pipeline | removes the generated `apply` job |
+| `github reconcile/tofu`, `gitlab reconcile/tofu` | `terragucci reconcile --mode apply` on a control repo of two projects opens one pull (merge) request on the project with no pipeline and leaves the in-line project alone; the request's check goes green; merged, its pipeline applies both roots, network before app | runs `--mode dry-run`, which opens nothing |
+| `check/terragrunt` (forgejo, github, gitlab) | on the Terragrunt fixture, whose pipeline runs in the terragrunt image: a push goes green, and a push with an unformatted `live/one/owner.hcl` goes red with the file named | the push that should be clean carries `owner.hcl` |
+| `apply/terragrunt` (forgejo, github, gitlab) | on the Terragrunt fixture, with both units' buckets deleted from floci first, a push to `main` goes green and both buckets then exist | removes the generated apply jobs |
+| `check/choudoufu` (forgejo, github, gitlab) | on the choudoufu fixture, whose pipeline runs in the choudoufu image: a push goes green, and a push adding `infra/ignored.tf`, a bucket whose lifecycle ignores its tags, goes red with a `refused: infra:` line naming it (live-check refuses ignoring the ownership markers) | the push that should be clean carries `ignored.tf` |
+| `apply/choudoufu` (forgejo, github, gitlab) | on the choudoufu fixture, with the bucket deleted from floci first, a push to `main` goes green, the bucket then exists, and its tags carry `tofu-estate` | removes the generated apply jobs |
+| `gitlab approval/gate` | with the gate at `always` and `GITLAB_TOKEN` set on the project, a push to `main` waits at wave 1: the pipeline ends failed, the wave's job ends with exit code 3 and prints `terragucci approve`, no status call answers 400, `terragucci/apply` is failed with the wave's command, and the bucket is absent | drops the `\|\| exit $?` after each job's heredoc, so the job ends with 1 |
 
-The `tg-*` and `cdf-*` claims run in `terragucci-terragrunt` and `terragucci-choudoufu`, the images the generated pipeline names. `validation.sh run` (`just validate-forge`, what ci.yml runs) drops init's digest pins, so each runner (forgejo-runner, gitlab-runner, act) takes the images bootstrap built from the tree under the same tag. `validation.sh record` (`just validation-record`) keeps the pins (`TG_KEEP_DIGESTS=1`), and the runners pull the published images from GHCR: the record a release publishes is the proof on those. On Forgejo the same four claims run through `forge-forgejo.sh`, so they check the generated `.forgejo/workflows/terragucci.yml`, while Forgejo's own `check` and `apply` keep the hand-written workflow.
+The `*/terragrunt` and `*/choudoufu` claims run in `terragucci-terragrunt` and `terragucci-choudoufu`, the images the generated pipeline names. `validation.sh run` (`just validate-forge`, what ci.yml runs) drops init's digest pins, so each runner (forgejo-runner, gitlab-runner, act) takes the images bootstrap built from the tree under the same tag. `validation.sh record` (`just validation-record`) keeps the pins (`TG_KEEP_DIGESTS=1`), and the runners pull the published images from GHCR: the record a release publishes is the proof on those. On Forgejo the same four claims run through `forge-forgejo.sh`, so they check the generated `.forgejo/workflows/terragucci.yml`, while Forgejo's own `check/tofu` and `apply/tofu` keep the hand-written workflow.
 
 `validate.sh` finds the run by the pushed commit's sha (`GET /repos/{owner}/{repo}/actions/runs?head_sha=`), polls it every 3s up to `TERRAGUCCI_VALIDATE_TIMEOUT` (900s), and prints each job's log through `/actions/jobs/{id}/logs` when a run is not what it expected.
 
@@ -114,17 +114,17 @@ A person boots a profile and runs `just validate-forge <forge>`, which runs each
 
 ```bash
 just stack-up forgejo              # stack/bootstrap.sh forgejo
-just validate forgejo check
-just validate forgejo apply
-BREAK=1 just validate forgejo check   # must fail
+just validate forgejo check/tofu
+just validate forgejo apply/tofu
+BREAK=1 just validate forgejo check/tofu   # must fail
 just stack-down                    # stack/down.sh: down -v, every profile
 
 just stack-up gitlab               # one profile at a time; GitLab is the heavy one
-just validate gitlab reconcile
+just validate gitlab reconcile/tofu
 just stack-for terragucci.yml      # only the profiles a config names
 ```
 
-`stack/validate-generated.sh` holds the github and gitlab claims, and forgejo's `tg-*` and `cdf-*`. Each forge supplies a small driver (`forge-github.sh`, `forge-gitlab.sh`, and `forge-forgejo.sh` for the claims it runs) with the same functions: reset a repo, push a tree, run the pipeline for a commit, open and merge a request. GitLab projects are kept between runs and reset (open merge requests closed, `main` reseeded and unprotected), because deleting one holds its name for a while. The mock's repos are deleted and created each time.
+`stack/validate-generated.sh` holds the github and gitlab claims, and forgejo's `*/terragrunt` and `*/choudoufu`. Each forge supplies a small driver (`forge-github.sh`, `forge-gitlab.sh`, and `forge-forgejo.sh` for the claims it runs) with the same functions: reset a repo, push a tree, run the pipeline for a commit, open and merge a request. GitLab projects are kept between runs and reset (open merge requests closed, `main` reseeded and unprotected), because deleting one holds its name for a while. The mock's repos are deleted and created each time.
 
 `bootstrap.sh` is safe to run again. It reuses the admin, replaces the API token, keeps a runner that is already online, and leaves the repo alone. It prints the env vars a run needs and writes them to `stack/.state/<profile>.env`, which `validate.sh` reads when they are not already set:
 
